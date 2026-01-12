@@ -6,6 +6,7 @@ const api = axios.create({
   baseURL: import.meta.env.VITE_API_BASE_URL,
 });
 
+
 // ---- TYPE DEFINITIONS ----
 // These should match your FastAPI Pydantic models
 
@@ -155,10 +156,10 @@ export const deleteChatSession = async (sessionId: number, userId: number) => {
  */
 export const updateChatSession = async (
   sessionId: number,
-  updatedSession: { 
-    title?: string; 
-    messages?: any[]; 
-    user_id: number 
+  updatedSession: {
+    title?: string;
+    messages?: any[];
+    user_id: number
   }
 ) => {
   try {
@@ -166,6 +167,21 @@ export const updateChatSession = async (
     return data; // Expected: updated chat session object
   } catch (error) {
     console.error("Failed to update chat session:", error);
+    throw error;
+  }
+};
+
+/**
+ * Deletes all chat sessions for a user.
+ * @param userId - The ID of the user.
+ * @returns A promise that resolves when deletion is complete.
+ */
+export const deleteAllChatSessions = async (userId: number) => {
+  try {
+    const { data } = await api.delete(`/api/chat-sessions/delete-all?user_id=${userId}`);
+    return data; // Expected: success confirmation
+  } catch (error) {
+    console.error("Failed to delete all chat sessions:", error);
     throw error;
   }
 };
@@ -214,3 +230,4 @@ export const login = async (credentials: LoginData): Promise<AuthResponse> => {
     throw error;
   }
 };
+

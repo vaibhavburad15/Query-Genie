@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { getChatSessions, createChatSession, updateChatSession, deleteChatSession } from '@/services/api';
+import { getChatSessions, createChatSession, updateChatSession, deleteChatSession, deleteAllChatSessions } from '@/services/api';
 import { ChatMessage } from '@/components/dashboard/ChatInput';
 import { useAuth } from '@/contexts/AuthContext';
 
@@ -89,27 +89,39 @@ export function useChatSession() {
       console.error("Error deleting chat session", error);
     }
   };
-const renameCurrentChat = async (title: string) => {
-  if (currentChatId === null || !user) return;
+  const renameCurrentChat = async (title: string) => {
+    if (currentChatId === null || !user) return;
 
-  try {
-    // Update local state immediately for better UX
-    setChatSessions(prev => {
-      const newSessions = [...prev];
-      const index = newSessions.findIndex(chat => chat.id === currentChatId);
-      if (index !== -1) {
-        newSessions[index] = { ...newSessions[index], title };
-      }
-      return newSessions;
-    });
+    try {
+      // Update local state immediately for better UX
+      setChatSessions(prev => {
+        const newSessions = [...prev];
+        const index = newSessions.findIndex(chat => chat.id === currentChatId);
+        if (index !== -1) {
+          newSessions[index] = { ...newSessions[index], title };
+        }
+        return newSessions;
+      });
 
-    // Persist only the title to the backend
-    await updateChatSession(currentChatId, { title, user_id: user.id });
-    console.log("Chat renamed to:", title);
-  } catch (error) {
-    console.error("Failed to rename chat session:", error);
-  }
-};
+      // Persist only the title to the backend
+      await updateChatSession(currentChatId, { title, user_id: user.id });
+      console.log("Chat renamed to:", title);
+    } catch (error) {
+      console.error("Failed to rename chat session:", error);
+    }
+  };
+
+  const deleteAllChats = async () => {
+    if (!user) return;
+    try {
+      await deleteAllChatSessions(user.id);
+      setChatSessions([]);
+      setCurrentChatId(null);
+      setMessages([]);
+    } catch (error) {
+      console.error("Error deleting all chat sessions", error);
+    }
+  };
 
   return {
     chatSessions,
@@ -118,6 +130,7 @@ const renameCurrentChat = async (title: string) => {
     createNewChat,
     selectChat,
     deleteChat,
+    deleteAllChats,
     setMessages,
     renameCurrentChat,
   };

@@ -17,6 +17,7 @@ const DashboardPage = () => {
     createNewChat,
     selectChat,
     deleteChat,
+    deleteAllChats,
     setMessages,
     renameCurrentChat,
   } = useChatSession();

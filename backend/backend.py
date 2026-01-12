@@ -1,8 +1,8 @@
 import os
 from datetime import datetime, timedelta, timezone
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, Depends
-from pydantic import BaseModel, EmailStr
+from fastapi import FastAPI, HTTPException, Depends, Path
+from pydantic import BaseModel, EmailStr, SecretStr
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 import random
@@ -20,23 +20,27 @@ from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime, F
 from sqlalchemy.orm import declarative_base
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.exc import SQLAlchemyError
-import ast
 import json
 import re
-from langchain.sql_database import SQLDatabase
+from typing import cast
+
+# Import the system prompt from your separate file
+from sql_system_prompt import SQL_SYSTEM_PROMPT
 
 # Load environment variables
 load_dotenv()
 groq_api_key = os.getenv("GROQ_API_KEY")
 if not groq_api_key:
-    raise RuntimeError("GROQ_API_KEY not found in environment variables")
+    print("WARNING: GROQ_API_KEY not found in environment variables. Please set it to enable AI features.")
+    GROQ_API_KEY = ""
+else:
+    GROQ_API_KEY = cast(str, groq_api_key)
 
-#              >>>>> EMAIL CONFIGURATION <<<<<
+#              >>>>> EMAIL CONFIGURATION <<<
 EMAIL_HOST_USER = os.getenv("EMAIL_HOST_USER")
 EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD")
 if not EMAIL_HOST_USER or not EMAIL_HOST_PASSWORD:
     print("WARNING: Email credentials not found. OTP sending will be disabled.")
-# ===============================================================
 
 # --- Password Hashing
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -46,10 +50,10 @@ SQLITE_DB_FILE = "users.db"
 engine = create_engine(
     f"sqlite:///{SQLITE_DB_FILE}", 
     echo=False,
-    pool_pre_ping=True,      # Test connections before using
-    pool_recycle=3600,       # Recycle connections every hour
-    pool_size=5,             # Limit connection pool size
-    max_overflow=10          # Maximum overflow connections
+    pool_pre_ping=True,
+    pool_recycle=3600,
+    pool_size=5,
+    max_overflow=10
 )
 Base = declarative_base()
 
@@ -62,6 +66,13 @@ class User(Base):
     gender = Column(String, nullable=False)
     username = Column(String, nullable=False)
     hashed_password = Column(String, nullable=False)
+
+class ChatSession(Base):
+    __tablename__ = "chat_sessions"
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey('users.id'), nullable=False)
+    title = Column(String, nullable=False)
+    messages = Column(Text, nullable=False)
 
 # Create the database tables
 Base.metadata.create_all(engine)
@@ -80,15 +91,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# --- Global Vars (For Demo) ---
-
-chat_history = [AIMessage(content="Hello! I'm your database assistant.")]
-
+# --- Global Vars ---
 otp_storage = {}  
 pending_sql_actions = {}
 
-
-
+# --- Pydantic Models ---
 class DBConfig(BaseModel):
     host: str
     port: int
@@ -98,9 +105,8 @@ class DBConfig(BaseModel):
 
 class ChatRequest(BaseModel):
     question: str
-    chat_history: list = []  # Make it optional with default empty list
+    chat_history: list = []
 
-# --- Auth Models ---
 class UserCreate(BaseModel):
     firstName: str
     lastName: str
@@ -114,20 +120,14 @@ class UserLogin(BaseModel):
     identifier: str
     password: str
 
-# Chat Session Model
-class ChatSession(Base):
-    __tablename__ = "chat_sessions"
-    id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey('users.id'), nullable=False)
-    title = Column(String, nullable=False)
-    messages = Column(Text, nullable=False)
-
-# Create the chat_sessions table if not exists
-Base.metadata.create_all(engine)
-
 class OtpRequest(BaseModel):
     email: EmailStr
-    
+
+class ConfirmSQLRequest(BaseModel):
+    user_id: int
+    confirm: bool
+    sql: str
+
 # --- Database Session Dependency ---
 def get_db():
     db = SessionLocal()
@@ -136,7 +136,7 @@ def get_db():
     finally:
         db.close()
 
-
+# --- OTP Functions ---
 def generate_otp():
     return str(random.randint(100000, 999999))
 
@@ -171,42 +171,16 @@ def send_otp_email(recipient_email: str, otp: str):
     except Exception as e:
         print(f"Failed to send email: {e}")
         raise HTTPException(status_code=500, detail="Failed to send OTP email.")
-# ===============================================================
-# ---------------- SQL SAFETY HELPERS ----------------
 
+# ---------------- SQL SAFETY HELPERS ----------------
 DANGEROUS_KEYWORDS = ["DROP", "TRUNCATE", "DELETE", "ALTER", "UPDATE"]
 
 def detect_dangerous_sql(sql: str):
     sql_upper = sql.upper()
     return [kw for kw in DANGEROUS_KEYWORDS if kw in sql_upper]
 
-def explain_sql_impact(sql: str, keywords: list[str]) -> str:
-    explanations = {
-        "DROP": "permanently delete a database or table",
-        "TRUNCATE": "remove ALL rows from a table instantly",
-        "DELETE": "remove records from a table",
-        "ALTER": "change the table structure",
-        "UPDATE": "modify existing data in the table"
-    }
-
-    impacts = [explanations[k] for k in keywords if k in explanations]
-
-    message = (
-        "⚠️ WARNING: This is a destructive database operation.\n\n"
-        f"SQL Generated:\n{sql}\n\n"
-        "If executed, this will:\n"
-    )
-
-    for impact in impacts:
-        message += f"- {impact}\n"
-
-    message += "\nDo you want to continue?\nSend CONFIRM to execute or CANCEL to stop."
-
-    return message
-
 def sql_to_table_preview(sql: str):
     sql_upper = sql.upper()
-
     action = "UNKNOWN"
     table = "-"
     condition = "-"
@@ -216,21 +190,13 @@ def sql_to_table_preview(sql: str):
         match = re.search(r"FROM\s+(\w+)", sql_upper)
         if match:
             table = match.group(1)
-
         where_match = re.search(r"WHERE\s+(.+)", sql, re.IGNORECASE)
         if where_match:
             condition = where_match.group(1)
 
     return {
         "columns": ["Action", "Table", "Condition", "Impact"],
-        "data": [
-            [
-                action,
-                table,
-                condition,
-                "Removes record(s) permanently"
-            ]
-        ]
+        "data": [[action, table, condition, "Removes record(s) permanently"]]
     }
 
 # --- Auth Helpers ---
@@ -243,43 +209,44 @@ def get_password_hash(password):
 def get_user(identifier: str, db):
     return db.query(User).filter(User.email == identifier).first()
 
-# Removed get_current_user function as JWT auth is removed
-
-# --- DB & LangChain Helpers ---
-def init_database(user, password, host, port, database):
-    try:
-        db_uri = f"mysql+mysqlconnector://{user}:{password}@{host}:{port}/{database}"
-        return SQLDatabase.from_uri(db_uri)
-    except SQLAlchemyError as e:
-        raise HTTPException(status_code=400, detail=f"DB connection failed: {e}")
+# ═══════════════════════════════════════════════════════════════
+#                    DB & LANGCHAIN HELPERS
+# ═══════════════════════════════════════════════════════════════
 
 def get_sql_chain(db):
-    template = """
-    You are a MySQL expert. Given the schema and chat history,
-    generate a SINGLE valid MySQL statement (DDL, DML, DCL, TCL, or queries with JOINS/CONSTRAINTS/TRIGGERS).
-    
-    IMPORTANT RULES:
-    1. When using aggregate functions (AVG, SUM, COUNT, MAX, MIN), you MUST include a GROUP BY clause for any non-aggregated columns in SELECT
-    2. If you select both aggregated and non-aggregated columns, GROUP BY the non-aggregated ones
-    3. Include only the SQL; no explanations, markdown, or extra text
-    4. Ensure the query is compatible with sql_mode=only_full_group_by
-    5. For aggregate queries, structure should be: SELECT column, AGG_FUNC(column) FROM table GROUP BY column
-
-    Schema:
-    {schema}
-
-    Chat History (recent context):
-    {chat_history}
-
-    User Question:
-    {question}
-
-    Your response must contain ONLY the SQL statement. Do NOT add any extra text, commentary, or code formatting like ```sql.
     """
-    prompt = ChatPromptTemplate.from_template(template)
-    llm = ChatGroq(api_key=groq_api_key, model="llama-3.1-8b-instant", temperature=0)
+    ✅ IMPROVED: Uses system message for permanent instructions
+    - System message = permanent rules (sent once per conversation)
+    - User message = dynamic content (schema + question)
+    - More efficient token usage
+    - Better consistency in SQL generation
+    """
+    
+    # User message template - only dynamic content
+    user_template = """Database Schema:
+{schema}
+
+User Question:
+{question}"""
+    
+    # Create prompt with system and user messages
+    prompt = ChatPromptTemplate.from_messages([
+        ("system", SQL_SYSTEM_PROMPT),  # ← Permanent instructions from separate file
+        ("user", user_template)          # ← Dynamic content (changes each time)
+    ])
+    
+    # Initialize the LLM with optimal settings
+    llm = ChatGroq(
+        api_key=SecretStr(str(GROQ_API_KEY)),
+        model="llama-3.3-70b-versatile",
+        temperature=0,          # Deterministic output for consistency
+        max_tokens=500,         # Sufficient for complex queries
+        stop_sequences=None
+    )
+    
     def get_schema(_):
         return db.get_table_info()
+    
     return (
         RunnablePassthrough.assign(schema=get_schema)
         | prompt
@@ -287,63 +254,58 @@ def get_sql_chain(db):
         | StrOutputParser()
     )
 
-def get_response(question, db, chat_history):
+def get_response(question, db):
+    """
+    ✅ ENHANCED: Improved error handling and user feedback
+    - No chat_history parameter - each query is independent
+    - LLM generates SQL from current question + schema
+    - Execution happens locally via SQLAlchemy
+    - Better error messages for common issues
+    """
     chain = get_sql_chain(db)
     
-    # ✅ TOKEN LIMIT FIX: Only use last 5 messages (increased from 3 for better context)
-    # This prevents token exhaustion after multiple queries while maintaining context
-    recent_history = chat_history[-5:] if len(chat_history) > 5 else chat_history
-    
-    formatted_chat_history = "\n".join([
-        f"{'Human' if isinstance(msg, HumanMessage) else 'AI'}: {msg.content}"
-        for msg in recent_history
-    ])
-    
-    connection = None  # Track connection for proper cleanup
+    connection = None
+    sql_query = "N/A"
     
     try:
-        response_text = chain.invoke({
-            "question": question,
-            "chat_history": formatted_chat_history
-        })
+        # Generate SQL using the chain (system prompt is automatic)
+        response_text = chain.invoke({"question": question})
         sql_query = response_text.strip()
         
-        # Remove any markdown formatting if present
+        # Clean up any markdown formatting that might slip through
         if sql_query.startswith("```"):
             sql_query = re.sub(r'^```[\w]*\n?', '', sql_query)
             sql_query = re.sub(r'\n?```$', '', sql_query)
             sql_query = sql_query.strip()
         
-        # --------- DANGEROUS SQL CHECK ---------
+        # Remove trailing semicolon if present
+        sql_query = sql_query.rstrip(';')
+        
+        # Check for dangerous operations
         dangerous_ops = detect_dangerous_sql(sql_query)
-
         if dangerous_ops:
             return json.dumps({
                 "type": "confirmation_required",
                 "sql": sql_query,
+                "dangerous_operations": dangerous_ops,
                 "table": sql_to_table_preview(sql_query)
             })
 
         # Detect SQL type
-        sql_upper = sql_query.upper()
+        sql_upper = sql_query.upper().strip()
         if sql_upper.startswith('SELECT'):
             sql_type = 'select'
         else:
             sql_type = 'other'
 
         if sql_type == 'select':
-            # NEW METHOD: Execute query and get column names from cursor
             try:
-                connection = db._engine.connect()  # Store connection reference
+                connection = db._engine.connect()
                 result_proxy = connection.execute(text(sql_query))
                 
-                # Get actual column names from database
                 columns = list(result_proxy.keys())
-                
-                # Fetch all rows
                 rows = result_proxy.fetchall()
                 
-                # Convert to list of lists with proper string formatting
                 data = []
                 for row in rows:
                     row_data = []
@@ -357,33 +319,46 @@ def get_response(question, db, chat_history):
                 output_data = {
                     "type": "select",
                     "data": data,
-                    "columns": columns,  # Real column names from database!
+                    "columns": columns,
                     "row_count": len(data)
                 }
                 
             except Exception as select_error:
-                # Return the actual SQL error to help debug
                 error_message = str(select_error)
                 
-                # Check if it's a GROUP BY error and provide helpful message
+                # Provide helpful error messages for common issues
                 if "only_full_group_by" in error_message or "1140" in error_message:
                     helpful_msg = (
-                        "⚠️ GROUP BY Error: When using aggregate functions like AVG(), SUM(), COUNT(), "
-                        "all non-aggregated columns in SELECT must be included in the GROUP BY clause. "
-                        f"\n\nOriginal error: {error_message}\n\n"
-                        "Please rephrase your question or ask me to fix the query."
+                        "⚠️ GROUP BY Error: When using aggregate functions like COUNT, AVG, SUM, "
+                        "all non-aggregated columns must be included in the GROUP BY clause.\n\n"
+                        f"SQL attempted: {sql_query}\n\n"
+                        f"Technical error: {error_message}\n\n"
+                        "💡 Tip: Try rephrasing your question or be more specific about what you want to group by."
                     )
-                    output_data = {
-                        "type": "error",
-                        "message": helpful_msg
-                    }
+                    output_data = {"type": "error", "message": helpful_msg}
+                elif "doesn't exist" in error_message.lower() or "unknown column" in error_message.lower():
+                    helpful_msg = (
+                        f"⚠️ Table/Column Not Found: The query references a table or column that doesn't exist in the database.\n\n"
+                        f"SQL attempted: {sql_query}\n\n"
+                        f"Technical error: {error_message}\n\n"
+                        "💡 Tip: Please check the spelling or ask me to show you the available tables and columns."
+                    )
+                    output_data = {"type": "error", "message": helpful_msg}
+                elif "syntax error" in error_message.lower():
+                    helpful_msg = (
+                        f"⚠️ SQL Syntax Error: The generated query has a syntax problem.\n\n"
+                        f"SQL attempted: {sql_query}\n\n"
+                        f"Technical error: {error_message}\n\n"
+                        "💡 Tip: Try rephrasing your question in a different way."
+                    )
+                    output_data = {"type": "error", "message": helpful_msg}
                 else:
                     output_data = {
-                        "type": "error",
-                        "message": f"Query execution failed: {error_message}"
+                        "type": "error", 
+                        "message": f"Query execution failed: {error_message}",
+                        "sql": sql_query
                     }
             finally:
-                # CRITICAL: Always close the connection
                 if connection:
                     try:
                         connection.close()
@@ -391,16 +366,16 @@ def get_response(question, db, chat_history):
                         print(f"Error closing connection: {close_error}")
                     
         else:
-            # For non-SELECT statements
+            # Handle non-SELECT queries (INSERT, UPDATE, etc.)
             result = db.run(sql_query)
             clean_result = result.strip()
             
             if 'Query OK' in clean_result or 'rows affected' in clean_result or 'row affected' in clean_result:
                 match = re.search(r'(\d+) rows? affected', clean_result)
                 affected_rows = int(match.group(1)) if match else 0
-                message = f"Statement executed successfully. {affected_rows} row{'s' if affected_rows != 1 else ''} affected."
+                message = f"✅ Statement executed successfully. {affected_rows} row{'s' if affected_rows != 1 else ''} affected."
             else:
-                message = clean_result or "Statement executed successfully."
+                message = clean_result or "✅ Statement executed successfully."
                 affected_rows = 0
             
             output_data = {
@@ -413,51 +388,44 @@ def get_response(question, db, chat_history):
         
     except Exception as e:
         error_data = {
-            "type": "error",
-            "message": str(e)
+            "type": "error", 
+            "message": f"Failed to generate or execute query: {str(e)}",
+            "sql_attempted": sql_query
         }
-        sql_query_placeholder = sql_query if 'sql_query' in locals() else 'N/A'
-        return f"SQL: `{sql_query_placeholder}`\nOutput: {json.dumps(error_data)}"
+        return f"SQL: `{sql_query}`\nOutput: {json.dumps(error_data)}"
     finally:
-        # CRITICAL: Final cleanup - ensure connection is closed
         if connection:
             try:
                 connection.close()
             except Exception as final_close_error:
                 print(f"Final connection close error: {final_close_error}")
 
-#                 >>>>> /api/send-otp <<<<<
+# ===============================================================
+#                    API ENDPOINTS
+# ===============================================================
+
 @app.post("/api/send-otp")
 async def send_otp_for_signup(request: OtpRequest):
     otp = generate_otp()
     expires_at = datetime.now(timezone.utc) + timedelta(minutes=5)
-    
-    # Store the OTP and its expiration time
     otp_storage[request.email] = {"otp": otp, "expires_at": expires_at}
-    
-    # Send the OTP via email
     send_otp_email(request.email, otp)
-    
-    print(f"OTP for {request.email}: {otp}") # For debugging
+    print(f"OTP for {request.email}: {otp}")
     return {"success": True, "message": "OTP has been sent to your email."}
 
-#            >>>>> /api/signup Endpoint <<<<<
 @app.post("/api/signup", status_code=201)
 async def signup_user(user: UserCreate, db: Session = Depends(get_db)):
-    # --- OTP Verification ---
     stored_otp_data = otp_storage.get(user.email)
     if not stored_otp_data:
         raise HTTPException(status_code=400, detail="OTP not requested or expired.")
 
     if datetime.now(timezone.utc) > stored_otp_data["expires_at"]:
-        # Clean up expired OTP
         del otp_storage[user.email]
         raise HTTPException(status_code=400, detail="OTP has expired. Please request a new one.")
         
     if stored_otp_data["otp"] != user.otp:
         raise HTTPException(status_code=400, detail="Invalid OTP provided.")
     
-    # --- User Creation ---
     if get_user(user.email, db):
         raise HTTPException(status_code=400, detail="Email already registered")
 
@@ -474,21 +442,16 @@ async def signup_user(user: UserCreate, db: Session = Depends(get_db)):
     db.add(db_user)
     db.commit()
     db.refresh(db_user)
-    
-    # Clean up OTP after successful verification
     del otp_storage[user.email]
 
     return {"success": True, "message": "User created successfully"}
 
-# --- Login Endpoint ---
 @app.post("/api/login")
 async def login_for_access_token(form_data: UserLogin, db: Session = Depends(get_db)):
     user = get_user(form_data.identifier, db)
     if not user or not verify_password(form_data.password, user.hashed_password):
-        raise HTTPException(
-            status_code=401,
-            detail="Incorrect email or password",
-        )
+        raise HTTPException(status_code=401, detail="Incorrect email or password")
+    
     return {
         "success": True,
         "message": "Login successful",
@@ -502,17 +465,13 @@ async def login_for_access_token(form_data: UserLogin, db: Session = Depends(get
         }
     }
 
-# --- Other Endpoints ---
 @app.post("/api/connect")
 async def connect_db(config: DBConfig):
-    global chat_history
-    print(f"Received connect request with config: host={config.host}, port={config.port}, user={config.user}, database={config.database}")
+    print(f"Received connect request: host={config.host}, port={config.port}, database={config.database}")
     try:
         db_uri = f"mysql+mysqlconnector://{config.user}:{config.password}@{config.host}:{config.port}/{config.database}"
         app.state.db_uri = db_uri
         app.state.db_name = config.database
-
-        chat_history = [AIMessage(content="Hello! I'm your database assistant.")]
         print("Database connection successful")
         return {"success": True, "database": config.database}
     except Exception as e:
@@ -538,34 +497,19 @@ async def chat_endpoint(request: ChatRequest):
         raise HTTPException(status_code=400, detail="Database not connected")
     
     try:
-        # ✅ Convert chat history to LangChain message objects with validation
-        chat_history = []
-        for msg in request.chat_history:
-            if isinstance(msg, dict):
-                role = msg.get("role", "").lower()
-                content = msg.get("content", "")
-                
-                if role == "ai" or role == "assistant":
-                    chat_history.append(AIMessage(content=content))
-                elif role == "human" or role == "user":
-                    chat_history.append(HumanMessage(content=content))
-            else:
-                print(f"Warning: Skipping invalid message format: {msg}")
-        
         db = SQLDatabase.from_uri(app.state.db_uri)
-        response = get_response(request.question, db, chat_history)
+        
+        # ✅ FIXED: Don't pass chat_history to get_response
+        response = get_response(request.question, db)
         return {"success": True, "response": response}
     except HTTPException as e:
         raise e
     except Exception as e:
         print(f"Chat endpoint error: {str(e)}")
-        print(f"Request data: question={request.question}, chat_history={request.chat_history}")
+        print(f"Request data: question={request.question}")
         raise HTTPException(status_code=500, detail=f"Unexpected error: {str(e)}")
 
 # --- Chat Session Endpoints ---
-
-from fastapi import Path
-import json
 
 @app.get("/api/chat-sessions")
 async def get_chat_sessions(user_id: int):
@@ -577,7 +521,7 @@ async def get_chat_sessions(user_id: int):
             result.append({
                 "id": session.id,
                 "title": session.title,
-                "messages": json.loads(session.messages),
+                "messages": json.loads(str(session.messages)),
                 "timestamp": datetime.utcnow().isoformat()
             })
         return result
@@ -599,7 +543,7 @@ async def create_chat_session(session: dict):
         return {
             "id": new_session.id,
             "title": new_session.title,
-            "messages": json.loads(new_session.messages),
+            "messages": json.loads(str(new_session.messages)),
             "timestamp": datetime.utcnow().isoformat()
         }
     except Exception as e:
@@ -618,19 +562,17 @@ async def update_chat_session(session_id: int, session: dict):
         if existing_session.user_id != session.get("user_id"):
             raise HTTPException(status_code=403, detail="Unauthorized to update this session")
 
-        # Update title if provided
         if "title" in session:
             existing_session.title = session["title"]
 
-        # Update messages if provided
         if "messages" in session:
-            existing_session.messages = json.dumps(session["messages"])
+            setattr(existing_session, 'messages', json.dumps(session["messages"]))
 
         db_session.commit()
         return {
             "id": existing_session.id,
             "title": existing_session.title,
-            "messages": json.loads(existing_session.messages),
+            "messages": json.loads(str(existing_session.messages)),
             "timestamp": datetime.utcnow().isoformat()
         }
     except Exception as e:
@@ -640,7 +582,10 @@ async def update_chat_session(session_id: int, session: dict):
         db_session.close()
 
 @app.delete("/api/chat-sessions/{session_id}")
-async def delete_chat_session(session_id: int = Path(..., description="The ID of the chat session to delete"), user_id: int = None):
+async def delete_chat_session(
+    session_id: int = Path(..., description="The ID of the chat session to delete"),
+    user_id: int | None = None
+):
     if user_id is None:
         raise HTTPException(status_code=400, detail="user_id is required")
     db_session = SessionLocal()
@@ -648,7 +593,7 @@ async def delete_chat_session(session_id: int = Path(..., description="The ID of
         session = db_session.query(ChatSession).filter(ChatSession.id == session_id).first()
         if not session:
             raise HTTPException(status_code=404, detail="Chat session not found")
-        if session.user_id != user_id:
+        if session.user_id != user_id:  # type: ignore
             raise HTTPException(status_code=403, detail="Unauthorized to delete this session")
         db_session.delete(session)
         db_session.commit()
@@ -661,21 +606,29 @@ async def delete_chat_session(session_id: int = Path(..., description="The ID of
     finally:
         db_session.close()
 
-from pydantic import BaseModel
-
-class ConfirmSQLRequest(BaseModel):
-    user_id: int
-    confirm: bool
-    sql: str
+@app.delete("/api/chat-sessions/delete-all")
+async def delete_all_chat_sessions(user_id: int):
+    if user_id is None:
+        raise HTTPException(status_code=400, detail="user_id is required")
+    db_session = SessionLocal()
+    try:
+        sessions = db_session.query(ChatSession).filter(ChatSession.user_id == user_id).all()
+        if not sessions:
+            return {"success": True, "message": "No chat sessions to delete"}
+        for session in sessions:
+            db_session.delete(session)
+        db_session.commit()
+        return {"success": True, "message": f"Deleted {len(sessions)} chat sessions"}
+    except Exception as e:
+        db_session.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to delete chat sessions: {str(e)}")
+    finally:
+        db_session.close()
 
 @app.post("/api/confirm-sql")
 async def confirm_sql_action(req: ConfirmSQLRequest):
-
     if not req.confirm:
-        return {
-            "type": "status",
-            "message": "SQL execution cancelled by user"
-        }
+        return {"type": "status", "message": "SQL execution cancelled by user"}
 
     try:
         if not hasattr(app.state, "db_uri"):
@@ -684,20 +637,12 @@ async def confirm_sql_action(req: ConfirmSQLRequest):
         db = SQLDatabase.from_uri(app.state.db_uri)
         db.run(req.sql)
 
-        return {
-            "type": "status",
-            "message": "SQL executed successfully"
-        }
+        return {"type": "status", "message": "SQL executed successfully"}
     except Exception as e:
-        return {
-            "type": "error",
-            "message": str(e)
-        }
+        return {"type": "error", "message": str(e)}
 
-# --- Cleanup on shutdown ---
 @app.on_event("shutdown")
 async def shutdown_event():
-    """Clean up resources on application shutdown"""
     if hasattr(app.state, "db_uri"):
         delattr(app.state, "db_uri")
     print("Application shutdown - resources cleaned up")

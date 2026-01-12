@@ -1,8 +1,14 @@
-import { Menu, Database, Plus, MessageSquare, MoreVertical, Trash2, RefreshCw, LogOut } from 'lucide-react';
+import { Menu, Database, Plus, MessageSquare, MoreVertical, RefreshCw, LogOut, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator } from '@/components/ui/dropdown-menu';
+import { 
+  DropdownMenu, 
+  DropdownMenuContent, 
+  DropdownMenuItem, 
+  DropdownMenuTrigger,
+  DropdownMenuSeparator 
+} from '@/components/ui/dropdown-menu';
 
 interface ChatSession {
   id: number;
@@ -157,21 +163,51 @@ const Sidebar = ({
                     chatSessions.map((chat) => (
                       <div
                         key={chat.id}
-                        className={`relative group rounded-lg transition-all duration-200 hover:bg-muted ${
+                        className={`group relative rounded-lg transition-all duration-200 hover:bg-muted px-2 py-2 ${
                           currentChatId === chat.id ? 'bg-brand-50 border-l-2 border-brand-500' : ''
                         }`}
                       >
                         <button
                           onClick={() => onChatSelect(chat.id)}
-                          className="w-full text-left p-2"
+                          className="w-full text-left"
                         >
                           <div className="flex items-start gap-2">
-                            <MessageSquare
-                              size={12}
-                              className={`mt-1 flex-shrink-0 ${
-                                currentChatId === chat.id ? 'text-brand-600' : 'text-muted-foreground'
-                              }`}
-                            />
+                            {/* Left side - Icon column with menu below */}
+                            <div className="flex flex-col items-center gap-1 flex-shrink-0">
+                              <MessageSquare
+                                size={14}
+                                className={`${
+                                  currentChatId === chat.id ? 'text-brand-600' : 'text-muted-foreground'
+                                }`}
+                              />
+                              
+                              {/* Three-dot menu below the chat icon */}
+                              <DropdownMenu>
+                                <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
+                                  <button
+                                    className="p-0.5 hover:bg-gray-200 rounded transition-colors"
+                                  >
+                                    <MoreVertical size={12} className="text-gray-600" />
+                                  </button>
+                                </DropdownMenuTrigger>
+                                <DropdownMenuContent align="start" className="w-48">
+                                  <DropdownMenuItem
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      if (window.confirm(`Delete chat "${chat.title}"?`)) {
+                                        onDeleteChat(chat.id);
+                                      }
+                                    }}
+                                    className="text-red-600 focus:text-red-600 focus:bg-red-50 cursor-pointer"
+                                  >
+                                    <Trash2 size={14} className="mr-2" />
+                                    Delete Chat
+                                  </DropdownMenuItem>
+                                </DropdownMenuContent>
+                              </DropdownMenu>
+                            </div>
+
+                            {/* Right side - Chat title and timestamp */}
                             <div className="flex-1 min-w-0">
                               <h4 className={`font-medium text-xs truncate ${
                                 currentChatId === chat.id ? 'text-brand-700' : 'text-foreground'
@@ -179,35 +215,16 @@ const Sidebar = ({
                                 {chat.title}
                               </h4>
                               <p className="text-xs text-muted-foreground truncate mt-1">
-                                {chat.timestamp}
+                                {new Date(chat.timestamp).toLocaleDateString('en-US', {
+                                  month: 'short',
+                                  day: 'numeric',
+                                  hour: '2-digit',
+                                  minute: '2-digit'
+                                })}
                               </p>
                             </div>
                           </div>
                         </button>
-
-                        <DropdownMenu>
-                          <DropdownMenuTrigger asChild>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className="absolute right-1 top-1 opacity-0 group-hover:opacity-100 transition-opacity p-1 h-5 w-5"
-                            >
-                              <MoreVertical size={10} />
-                            </Button>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent align="end">
-                            <DropdownMenuItem
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                onDeleteChat(chat.id);
-                              }}
-                              className="text-destructive text-xs"
-                            >
-                              <Trash2 size={10} className="mr-1" />
-                              Delete
-                            </DropdownMenuItem>
-                          </DropdownMenuContent>
-                        </DropdownMenu>
                       </div>
                     ))
                   )}
