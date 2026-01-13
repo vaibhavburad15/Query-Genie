@@ -1,4 +1,4 @@
-import { Menu, Database, Plus, MessageSquare, MoreVertical, RefreshCw, LogOut, Trash2 } from 'lucide-react';
+import { Menu, Database, Plus, MessageSquare, MoreVertical, RefreshCw, LogOut, Trash2, Settings, Star, Lightbulb } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -9,6 +9,8 @@ import {
   DropdownMenuTrigger,
   DropdownMenuSeparator 
 } from '@/components/ui/dropdown-menu';
+import RecommendationsPanel from './RecommendationsPanel';
+import FavoritesPanel from './FavoritesPanel';
 
 interface ChatSession {
   id: number;
@@ -28,6 +30,8 @@ interface SidebarProps {
   currentChatId: number | null;
   onChatSelect: (chatId: number) => void;
   onDeleteChat: (chatId: number) => void;
+  userId: number;
+  onOpenSettings: () => void;
 }
 
 const Sidebar = ({ 
@@ -41,8 +45,20 @@ const Sidebar = ({
   chatSessions, 
   currentChatId, 
   onChatSelect, 
-  onDeleteChat 
+  onDeleteChat,
+  userId,
+  onOpenSettings
 }: SidebarProps) => {
+
+  const handleSelectRecommendation = (question: string) => {
+    // This will be used by parent to fill the input
+    console.log('Selected recommendation:', question);
+  };
+
+  const handleSelectFavorite = (question: string) => {
+    // This will be used by parent to fill the input
+    console.log('Selected favorite:', question);
+  };
 
   return (
     <div className={`relative h-full bg-surface-elevated border-r border-border transition-all duration-300 ${
@@ -50,7 +66,17 @@ const Sidebar = ({
     }`}>
       <div className="flex flex-col h-full">
         {/* Header */}
-        <div className="flex items-center justify-end p-4 border-b border-border">
+        <div className="flex items-center justify-between p-4 border-b border-border">
+          {!isCollapsed && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={onOpenSettings}
+              className="p-2 hover:bg-muted"
+            >
+              <Settings size={18} />
+            </Button>
+          )}
           <Button
             variant="ghost"
             size="sm"
@@ -146,6 +172,18 @@ const Sidebar = ({
                 </TooltipProvider>
               </div>
 
+              {/* Recommendations Panel */}
+              <RecommendationsPanel
+                userId={userId}
+                onSelectRecommendation={handleSelectRecommendation}
+              />
+
+              {/* Favorites Panel */}
+              <FavoritesPanel
+                userId={userId}
+                onSelectFavorite={handleSelectFavorite}
+              />
+
               {/* Chat History */}
               <div className="flex items-center justify-between p-3 border-b border-border">
                 <h3 className="text-xs font-medium text-muted-foreground">Chat History</h3>
@@ -172,7 +210,6 @@ const Sidebar = ({
                           className="w-full text-left"
                         >
                           <div className="flex items-start gap-2">
-                            {/* Left side - Icon column with menu below */}
                             <div className="flex flex-col items-center gap-1 flex-shrink-0">
                               <MessageSquare
                                 size={14}
@@ -181,12 +218,9 @@ const Sidebar = ({
                                 }`}
                               />
                               
-                              {/* Three-dot menu below the chat icon */}
                               <DropdownMenu>
                                 <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
-                                  <button
-                                    className="p-0.5 hover:bg-gray-200 rounded transition-colors"
-                                  >
+                                  <button className="p-0.5 hover:bg-gray-200 rounded transition-colors">
                                     <MoreVertical size={12} className="text-gray-600" />
                                   </button>
                                 </DropdownMenuTrigger>
@@ -207,7 +241,6 @@ const Sidebar = ({
                               </DropdownMenu>
                             </div>
 
-                            {/* Right side - Chat title and timestamp */}
                             <div className="flex-1 min-w-0">
                               <h4 className={`font-medium text-xs truncate ${
                                 currentChatId === chat.id ? 'text-brand-700' : 'text-foreground'
@@ -236,6 +269,24 @@ const Sidebar = ({
           {/* Collapsed State - Show Icons Only */}
           {isCollapsed && (
             <div className="flex flex-col items-center gap-4 p-2">
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={onOpenSettings}
+                      className="w-10 h-10 p-0"
+                    >
+                      <Settings size={18} />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent side="right">
+                    <p>Settings</p>
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+
               <TooltipProvider>
                 <Tooltip>
                   <TooltipTrigger asChild>

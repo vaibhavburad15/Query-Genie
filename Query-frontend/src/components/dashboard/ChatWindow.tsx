@@ -1,9 +1,10 @@
-import React, { useState } from 'react';
-import { AlertCircle, Database, Table, BarChart3 } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { AlertCircle, Database, Table, BarChart3, Heart, Download } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import SqlQueryViewer from './SqlQueryViewer';
 import EnhancedDataTable from './EnhancedDataTable';
 import queryGenieLogo from '@/assets/query-genie-logo.png';
+import { useToast } from '@/hooks/use-toast';
 
 // Helper function to parse SQL output string to structured data
 function parseSqlOutput(output: string): {
@@ -69,6 +70,8 @@ interface ChatWindowProps {
   onConnectDatabase: () => void;
   onConfirmSql: (sql: string) => void;
   onCancelSql: () => void;
+  userId: number;
+  currentQuestion: string;
 }
 
 const ChatWindow: React.FC<ChatWindowProps> = ({
@@ -76,10 +79,180 @@ const ChatWindow: React.FC<ChatWindowProps> = ({
   onConnectDatabase,
   onConfirmSql,
   onCancelSql,
+  userId,
+  currentQuestion,
 }) => {
   const [sqlVisibility, setSqlVisibility] = useState<Record<string, boolean>>({});
   const [confirmationHandled, setConfirmationHandled] = useState<Record<string, boolean>>({});
+  const [favoritedQueries, setFavoritedQueries] = useState<Record<string, boolean>>({});
+  const { toast } = useToast();
+
   console.log('Rendering ChatWindow with messages:', messages);
+
+  // Check if queries are favorited
+  useEffect(() => {
+    const checkFavorites = async () => {
+      for (const message of messages) {
+        if (message.role === 'ai') {
+          const sqlMatch = message.content.match(/SQL:\s*[`']([^`']+)[`']/);
+          if (sqlMatch) {
+            const sql = sqlMatch[1];
+            try {
+              const response = await fetch(
+                `http://localhost:8000/api/favorites/${userId}/check?sql=${encodeURIComponent(sql)}`
+              );
+              const data = await response.json();
+              setFavoritedQueries(prev => ({ ...prev, [message.id]: data.is_favorite }));
+            } catch (error) {
+              console.error('Failed to check favorite:', error);
+            }
+          }
+        }
+      }
+    };
+
+    if (userId && messages.length > 0) {
+      checkFavorites();
+    }
+  }, [messages, userId]);
+
+  const toggleFavorite = async (messageId: string, question: string, sqlQuery: string) => {
+    const isFavorited = favoritedQueries[messageId];
+
+    if (isFavorited) {
+      // Remove from favorites
+      try {
+        const checkResponse = await fetch(
+          `http://localhost:8000/api/favorites/${userId}/check?sql=${encodeURIComponent(sqlQuery)}`
+        );
+        
+        if (!checkResponse.ok) {
+          throw new Error(`HTTP error! status: ${checkResponse.status}`);
+        }
+        
+        const checkData = await checkResponse.json();
+
+        if (checkData.favorite_id) {
+          const deleteResponse = await fetch(
+            `http://localhost:8000/api/favorites/${checkData.favorite_id}?user_id=${userId}`, 
+            { method: 'DELETE' }
+          );
+          
+          if (!deleteResponse.ok) {
+            throw new Error(`HTTP error! status: ${deleteResponse.status}`);
+          }
+          
+          setFavoritedQueries(prev => ({ ...prev, [messageId]: false }));
+          toast({
+            title: "Removed from favorites",
+            description: "Query removed from your favorites.",
+          });
+        }
+      } catch (error) {
+        console.error('Error removing favorite:', error);
+        toast({
+          title: "Error",
+          description: error instanceof Error ? error.message : "Failed to remove from favorites.",
+          variant: "destructive",
+        });
+      }
+    } else {
+      // Add to favorites
+      try {
+        const payload = {
+          user_id: userId,
+          question: question || currentQuestion || 'Untitled Query',
+          sql_query: sqlQuery,
+          tags: 'query',
+          description: '',
+        };
+        
+        console.log('Adding favorite with payload:', payload);
+        console.log('Full request details:', {
+          url: 'http://localhost:8000/api/favorites',
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        
+        const response = await fetch('http://localhost:8000/api/favorites', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+
+        console.log('Response status:', response.status);
+        console.log('Response headers:', response.headers);
+
+        if (!response.ok) {
+          let errorText;
+          try {
+            errorText = await response.text();
+            console.error('Server error response:', errorText);
+          } catch (e) {
+            errorText = 'Could not read error response';
+          }
+          throw new Error(`HTTP error! status: ${response.status} - ${errorText}`);
+        }
+
+        const data = await response.json();
+        console.log('Add favorite response:', data);
+        
+        if (data.success) {
+          setFavoritedQueries(prev => ({ ...prev, [messageId]: true }));
+          toast({
+            title: "Added to favorites",
+            description: "Query saved to your favorites.",
+          });
+        } else {
+          throw new Error(data.message || 'Unknown error');
+        }
+      } catch (error) {
+        console.error('Error adding favorite:', error);
+        toast({
+          title: "Error",
+          description: error instanceof Error ? error.message : "Failed to add to favorites.",
+          variant: "destructive",
+        });
+      }
+    }
+  };
+
+  const handleExport = async (data: string[][], columns: string[], format: 'csv' | 'json') => {
+    try {
+      const response = await fetch('http://localhost:8000/api/export', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ data, columns, format }),
+      });
+
+      const result = await response.json();
+
+      if (result.success) {
+        const mimeType = format === 'csv' ? 'text/csv' : 'application/json';
+        const blob = new Blob([result.data], { type: mimeType });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = result.filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+
+        toast({
+          title: "Export successful",
+          description: `Results exported as ${format.toUpperCase()}`,
+        });
+      }
+    } catch (error) {
+      toast({
+        title: "Export failed",
+        description: "Failed to export results. Please try again.",
+        variant: "destructive",
+      });
+    }
+  };
 
   return (
     <div className="flex-1 overflow-y-auto bg-gray-50 p-6">
@@ -154,7 +327,7 @@ const ChatWindow: React.FC<ChatWindowProps> = ({
                       </p>
                     </div>
 
-                    {/* Preview Table (same as SELECT table UI) */}
+                    {/* Preview Table */}
                     <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
                       <div className="p-4">
                         <EnhancedDataTable
@@ -196,17 +369,14 @@ const ChatWindow: React.FC<ChatWindowProps> = ({
 
               if (sqlMatch && parsedOutput) {
                 const showSqlQuery = sqlVisibility[message.id] || false;
+                const isFavorited = favoritedQueries[message.id] || false;
 
                 if (parsedOutput.type === 'select' && parsedOutput.data) {
-                  // ✅ Use columns from backend response (real database column names)
-                  // Or generate generic names if not provided
                   let columns: string[] = [];
                   
                   if (parsedOutput.columns && parsedOutput.columns.length > 0) {
-                    // Use real column names from database
                     columns = parsedOutput.columns;
                   } else if (parsedOutput.data.length > 0) {
-                    // Fallback: generate generic column names based on data width
                     columns = parsedOutput.data[0].map((_, idx) => `Column_${idx + 1}`);
                   } else {
                     columns = ['Value'];
@@ -214,19 +384,31 @@ const ChatWindow: React.FC<ChatWindowProps> = ({
                   
                   const rowCount = parsedOutput.rowCount || parsedOutput.data.length;
 
-                  console.log('Columns:', columns, 'OutputData:', parsedOutput.data);
-
                   return (
                     <div key={message.id} className="space-y-4">
-                      {/* SQL Query Viewer */}
-                      <SqlQueryViewer
-                        query={sqlMatch[1]}
-                        rowCount={rowCount}
-                        isVisible={showSqlQuery}
-                        onToggleVisibility={() => setSqlVisibility(prev => ({ ...prev, [message.id]: !prev[message.id] }))}
-                      />
+                      {/* SQL Query Viewer with Favorite Button */}
+                      <div className="flex items-start gap-2">
+                        <div className="flex-1">
+                          <SqlQueryViewer
+                            query={sqlMatch[1]}
+                            rowCount={rowCount}
+                            isVisible={showSqlQuery}
+                            onToggleVisibility={() => setSqlVisibility(prev => ({ ...prev, [message.id]: !prev[message.id] }))}
+                          />
+                        </div>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => toggleFavorite(message.id, currentQuestion, sqlMatch[1])}
+                          className="mt-1"
+                        >
+                          <Heart
+                            className={`h-5 w-5 ${isFavorited ? 'fill-pink-500 text-pink-500' : 'text-gray-400'}`}
+                          />
+                        </Button>
+                      </div>
 
-                      {/* Enhanced Data Table */}
+                      {/* Enhanced Data Table with Export */}
                       <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
                         <div className="border-b border-gray-200 bg-gray-50 px-4 py-3">
                           <div className="flex items-center justify-between">
@@ -234,8 +416,26 @@ const ChatWindow: React.FC<ChatWindowProps> = ({
                               <Table className="h-4 w-4 text-gray-600" />
                               <h3 className="text-sm font-medium text-gray-900">Query Results</h3>
                             </div>
-                            <div className="text-xs text-gray-500">
-                              {rowCount} row{rowCount !== 1 ? 's' : ''} returned
+                            <div className="flex items-center gap-2">
+                              <div className="text-xs text-gray-500">
+                                {rowCount} row{rowCount !== 1 ? 's' : ''} returned
+                              </div>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => handleExport(parsedOutput.data!, columns, 'csv')}
+                              >
+                                <Download className="h-4 w-4 mr-1" />
+                                CSV
+                              </Button>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => handleExport(parsedOutput.data!, columns, 'json')}
+                              >
+                                <Download className="h-4 w-4 mr-1" />
+                                JSON
+                              </Button>
                             </div>
                           </div>
                         </div>
@@ -248,7 +448,7 @@ const ChatWindow: React.FC<ChatWindowProps> = ({
                             pageSize={10}
                             searchable={true}
                             sortable={true}
-                            exportable={true}
+                            exportable={false}
                           />
                         </div>
                       </div>
@@ -257,15 +457,27 @@ const ChatWindow: React.FC<ChatWindowProps> = ({
                 } else if (parsedOutput.type === 'status') {
                   return (
                     <div key={message.id} className="space-y-4">
-                      {/* SQL Query Viewer */}
-                      <SqlQueryViewer
-                        query={sqlMatch[1]}
-                        rowCount={0}
-                        isVisible={showSqlQuery}
-                        onToggleVisibility={() => setSqlVisibility(prev => ({ ...prev, [message.id]: !prev[message.id] }))}
-                      />
+                      <div className="flex items-start gap-2">
+                        <div className="flex-1">
+                          <SqlQueryViewer
+                            query={sqlMatch[1]}
+                            rowCount={0}
+                            isVisible={showSqlQuery}
+                            onToggleVisibility={() => setSqlVisibility(prev => ({ ...prev, [message.id]: !prev[message.id] }))}
+                          />
+                        </div>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => toggleFavorite(message.id, currentQuestion, sqlMatch[1])}
+                          className="mt-1"
+                        >
+                          <Heart
+                            className={`h-5 w-5 ${isFavorited ? 'fill-pink-500 text-pink-500' : 'text-gray-400'}`}
+                          />
+                        </Button>
+                      </div>
 
-                      {/* Success Alert */}
                       <div className="bg-green-50 border border-green-200 text-green-800 px-6 py-4 rounded-lg max-w-[90%] flex items-start gap-3 shadow-sm">
                         <div className="flex-shrink-0 w-5 h-5 bg-green-600 text-white rounded-full flex items-center justify-center text-xs font-semibold">✓</div>
                         <div>
@@ -277,7 +489,6 @@ const ChatWindow: React.FC<ChatWindowProps> = ({
                 } else if (parsedOutput.type === 'error') {
                   return (
                     <div key={message.id} className="space-y-4">
-                      {/* SQL Query Viewer */}
                       {sqlMatch && (
                         <SqlQueryViewer
                           query={sqlMatch[1]}
@@ -287,7 +498,6 @@ const ChatWindow: React.FC<ChatWindowProps> = ({
                         />
                       )}
 
-                      {/* Error Alert */}
                       <div className="bg-red-50 border border-red-200 text-red-800 px-6 py-4 rounded-lg max-w-[90%] flex items-start gap-3 shadow-sm">
                         <AlertCircle size={20} className="flex-shrink-0 mt-0.5 text-red-600" />
                         <div>

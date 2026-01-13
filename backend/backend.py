@@ -23,7 +23,21 @@ from sqlalchemy.exc import SQLAlchemyError
 import json
 import re
 from typing import cast
-
+from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime, ForeignKey, text
+from sqlalchemy.orm import declarative_base
+from sqlalchemy.orm import sessionmaker
+from typing import List, Optional  # Add Optional if not already there
+import csv
+import io
+# Replace the import with:
+from extended_models import (
+    FavoriteQuery,
+    UserSettings,
+    TipOfTheDay,
+    QueryRecommendation,
+    QueryHistory,
+    Base  # ← Import the SAME Base used by extended models
+)
 # Import the system prompt from your separate file
 from sql_system_prompt import SQL_SYSTEM_PROMPT
 
@@ -55,7 +69,7 @@ engine = create_engine(
     pool_size=5,
     max_overflow=10
 )
-Base = declarative_base()
+
 
 class User(Base):
     __tablename__ = "users"
@@ -128,6 +142,26 @@ class ConfirmSQLRequest(BaseModel):
     confirm: bool
     sql: str
 
+class FavoriteQueryCreate(BaseModel):
+    user_id: int
+    question: str
+    sql_query: str
+    tags: Optional[str] = None
+    description: Optional[str] = None
+
+class UserSettingsUpdate(BaseModel):
+    theme: Optional[str] = None
+    language: Optional[str] = None
+    results_per_page: Optional[int] = None
+    show_tips: Optional[bool] = None
+    auto_save_sessions: Optional[bool] = None
+    sql_syntax_highlighting: Optional[bool] = None
+    notification_preferences: Optional[dict] = None
+
+class ExportRequest(BaseModel):
+    data: List[List]
+    columns: List[str]
+    format: str  # csv, json
 # --- Database Session Dependency ---
 def get_db():
     db = SessionLocal()
@@ -640,6 +674,374 @@ async def confirm_sql_action(req: ConfirmSQLRequest):
         return {"type": "status", "message": "SQL executed successfully"}
     except Exception as e:
         return {"type": "error", "message": str(e)}
+
+
+@app.get("/api/favorites/{user_id}")
+async def get_favorites(user_id: int, db: Session = Depends(get_db)):
+    """Get all favorite queries for a user"""
+    favorites = db.query(FavoriteQuery).filter(
+        FavoriteQuery.user_id == user_id
+    ).order_by(FavoriteQuery.created_at.desc()).all()
+    
+    return [{
+        "id": fav.id,
+        "question": fav.question,
+        "sql_query": fav.sql_query,
+        "tags": fav.tags,
+        "description": fav.description,
+        "created_at": fav.created_at.isoformat()
+    } for fav in favorites]
+
+
+@app.post("/api/favorites")
+async def add_favorite(favorite: FavoriteQueryCreate, db: Session = Depends(get_db)):
+    """Add a query to favorites"""
+    existing = db.query(FavoriteQuery).filter(
+        FavoriteQuery.user_id == favorite.user_id,
+        FavoriteQuery.sql_query == favorite.sql_query
+    ).first()
+    
+    if existing:
+        return {
+            "success": False,
+            "message": "Query already in favorites",
+            "favorite_id": existing.id
+        }
+    
+    new_fav = FavoriteQuery(
+        user_id=favorite.user_id,
+        question=favorite.question,
+        sql_query=favorite.sql_query,
+        tags=favorite.tags,
+        description=favorite.description
+    )
+    db.add(new_fav)
+    db.commit()
+    db.refresh(new_fav)
+    
+    return {
+        "success": True,
+        "favorite_id": new_fav.id,
+        "message": "Query added to favorites"
+    }
+
+
+@app.delete("/api/favorites/{favorite_id}")
+async def remove_favorite(favorite_id: int, user_id: int, db: Session = Depends(get_db)):
+    """Remove a query from favorites"""
+    fav = db.query(FavoriteQuery).filter(
+        FavoriteQuery.id == favorite_id,
+        FavoriteQuery.user_id == user_id
+    ).first()
+    
+    if not fav:
+        raise HTTPException(status_code=404, detail="Favorite not found")
+    
+    db.delete(fav)
+    db.commit()
+    return {"success": True, "message": "Removed from favorites"}
+
+
+@app.get("/api/favorites/{user_id}/check")
+async def check_favorite(user_id: int, sql: str, db: Session = Depends(get_db)):
+    """Check if a query is already favorited"""
+    exists = db.query(FavoriteQuery).filter(
+        FavoriteQuery.user_id == user_id,
+        FavoriteQuery.sql_query == sql
+    ).first()
+    
+    return {
+        "is_favorite": exists is not None,
+        "favorite_id": exists.id if exists else None
+    }
+
+
+# -------- RECOMMENDATIONS --------
+
+@app.get("/api/recommendations/{user_id}")
+async def get_recommendations(user_id: int, db: Session = Depends(get_db)):
+    """Get personalized query recommendations"""
+    general_recs = db.query(QueryRecommendation).filter(
+        QueryRecommendation.is_active == True
+    ).order_by(QueryRecommendation.use_count.desc()).limit(5).all()
+    
+    recent_queries = db.query(QueryHistory).filter(
+        QueryHistory.user_id == user_id,
+        QueryHistory.success == True
+    ).order_by(QueryHistory.created_at.desc()).limit(3).all()
+    
+    recommendations = []
+    
+    for rec in general_recs:
+        recommendations.append({
+            "type": "template",
+            "category": rec.category,
+            "title": rec.title,
+            "question": rec.question,
+            "description": rec.description,
+            "icon": "⭐"
+        })
+    
+    for query in recent_queries:
+        recommendations.append({
+            "type": "history",
+            "category": "recent",
+            "title": "Recent Query",
+            "question": query.question,
+            "sql": query.sql_query,
+            "icon": "🕐"
+        })
+    
+    return recommendations
+
+
+@app.post("/api/recommendations/{rec_id}/use")
+async def track_recommendation_use(rec_id: int, db: Session = Depends(get_db)):
+    """Track when a recommendation is used"""
+    rec = db.query(QueryRecommendation).filter(
+        QueryRecommendation.id == rec_id
+    ).first()
+    
+    if rec:
+        # ✅ FIX: Use setattr() to avoid Pylance type errors
+        current_count = rec.use_count
+        setattr(rec, 'use_count', current_count + 1)
+        db.commit()
+        return {"success": True}
+    
+    return {"success": False, "message": "Recommendation not found"}
+
+
+# -------- TIPS OF THE DAY --------
+
+@app.get("/api/tips/daily")
+async def get_daily_tip(db: Session = Depends(get_db)):
+    """Get a random tip of the day"""
+    import random
+    
+    tips = db.query(TipOfTheDay).filter(TipOfTheDay.is_active == True).all()
+    
+    if not tips:
+        return {
+            "title": "Welcome to Query Genie! 👋",
+            "content": "Start by connecting to your database and asking questions in natural language.",
+            "category": "general",
+            "icon": "💡"
+        }
+    
+    tip = random.choice(tips)
+    return {
+        "id": tip.id,
+        "title": tip.title,
+        "content": tip.content,
+        "category": tip.category,
+        "icon": "💡"
+    }
+
+
+@app.get("/api/tips/category/{category}")
+async def get_tips_by_category(category: str, db: Session = Depends(get_db)):
+    """Get all tips in a specific category"""
+    tips = db.query(TipOfTheDay).filter(
+        TipOfTheDay.category == category,
+        TipOfTheDay.is_active == True
+    ).all()
+    
+    return [{
+        "id": tip.id,
+        "title": tip.title,
+        "content": tip.content,
+        "category": tip.category
+    } for tip in tips]
+
+
+# -------- USER SETTINGS --------
+
+@app.get("/api/settings/{user_id}")
+async def get_user_settings(user_id: int, db: Session = Depends(get_db)):
+    """Get user settings"""
+    settings = db.query(UserSettings).filter(UserSettings.user_id == user_id).first()
+    
+    if not settings:
+        settings = UserSettings(user_id=user_id)
+        db.add(settings)
+        db.commit()
+        db.refresh(settings)
+    
+    return {
+        "theme": settings.theme,
+        "language": settings.language,
+        "results_per_page": settings.results_per_page,
+        "show_tips": settings.show_tips,
+        "auto_save_sessions": settings.auto_save_sessions,
+        "sql_syntax_highlighting": settings.sql_syntax_highlighting,
+        "notification_preferences": settings.notification_preferences or {}
+    }
+
+
+@app.put("/api/settings/{user_id}")
+async def update_user_settings(
+    user_id: int,
+    settings_update: UserSettingsUpdate,
+    db: Session = Depends(get_db)
+):
+    """Update user settings"""
+    settings = db.query(UserSettings).filter(UserSettings.user_id == user_id).first()
+    
+    if not settings:
+        settings = UserSettings(user_id=user_id)
+        db.add(settings)
+    
+    # ✅ FIXED: Use setattr() for dynamic updates
+    update_data = settings_update.dict(exclude_unset=True)
+    for field, value in update_data.items():
+        setattr(settings, field, value)
+    
+    # ✅ FIXED: Use setattr for updated_at too
+    setattr(settings, 'updated_at', datetime.utcnow())
+    db.commit()
+    db.refresh(settings)
+    
+    return {"success": True, "message": "Settings updated successfully"}
+
+# -------- EXPORT RESULTS --------
+
+@app.post("/api/export")
+async def export_results(request: ExportRequest):
+    """Export query results to CSV or JSON"""
+    try:
+        if request.format == "csv":
+            output = io.StringIO()
+            writer = csv.writer(output)
+            writer.writerow(request.columns)
+            writer.writerows(request.data)
+            
+            return {
+                "success": True,
+                "format": "csv",
+                "data": output.getvalue(),
+                "filename": f"query_results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+            }
+        
+        elif request.format == "json":
+            results = []
+            for row in request.data:
+                row_dict = {}
+                for i, col in enumerate(request.columns):
+                    row_dict[col] = row[i] if i < len(row) else None
+                results.append(row_dict)
+            
+            return {
+                "success": True,
+                "format": "json",
+                "data": json.dumps(results, indent=2),
+                "filename": f"query_results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+            }
+        
+        else:
+            raise HTTPException(status_code=400, detail="Unsupported export format. Use 'csv' or 'json'")
+    
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Export failed: {str(e)}")
+
+
+# -------- SEARCH TABLE DATA --------
+
+@app.get("/api/search/tables")
+async def search_tables(query: str):
+    """Search for tables and columns in the connected database"""
+    if not hasattr(app.state, "db_uri"):
+        raise HTTPException(status_code=400, detail="Database not connected")
+    
+    try:
+        from langchain_community.utilities import SQLDatabase
+        db = SQLDatabase.from_uri(app.state.db_uri)
+        
+        schema_info = db.get_table_info()
+        query_lower = query.lower()
+        results = {
+            "tables": [],
+            "columns": []
+        }
+        
+        lines = schema_info.split('\n')
+        current_table = None
+        
+        for line in lines:
+            if 'CREATE TABLE' in line:
+                table_name = line.split('`')[1] if '`' in line else None
+                current_table = table_name
+                if table_name and query_lower in table_name.lower():
+                    results["tables"].append(table_name)
+            elif current_table and '`' in line:
+                col_name = line.split('`')[1]
+                if query_lower in col_name.lower():
+                    results["columns"].append({
+                        "table": current_table,
+                        "column": col_name
+                    })
+        
+        return results
+    
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Search failed: {str(e)}")
+
+
+# -------- QUERY HISTORY TRACKING --------
+
+@app.post("/api/history/track")
+async def track_query_execution(data: dict, db: Session = Depends(get_db)):
+    """Track query execution for analytics"""
+    history = QueryHistory(
+        user_id=data.get("user_id"),
+        session_id=data.get("session_id"),
+        question=data.get("question"),
+        sql_query=data.get("sql_query"),
+        success=data.get("success", True),
+        execution_time_ms=data.get("execution_time_ms"),
+        row_count=data.get("row_count")
+    )
+    db.add(history)
+    db.commit()
+    
+    return {"success": True, "message": "Query tracked"}
+
+
+@app.get("/api/history/{user_id}")
+async def get_query_history(user_id: int, limit: int = 50, db: Session = Depends(get_db)):
+    """Get query history for a user"""
+    history = db.query(QueryHistory).filter(
+        QueryHistory.user_id == user_id
+    ).order_by(QueryHistory.created_at.desc()).limit(limit).all()
+    
+    return [{
+        "id": h.id,
+        "question": h.question,
+        "sql_query": h.sql_query,
+        "success": h.success,
+        "execution_time_ms": h.execution_time_ms,
+        "row_count": h.row_count,
+        "created_at": h.created_at.isoformat()
+    } for h in history]
+
+
+@app.get("/api/history/{user_id}/stats")
+async def get_query_stats(user_id: int, db: Session = Depends(get_db)):
+    """Get query statistics for a user"""
+    total_queries = db.query(QueryHistory).filter(
+        QueryHistory.user_id == user_id
+    ).count()
+    
+    successful_queries = db.query(QueryHistory).filter(
+        QueryHistory.user_id == user_id,
+        QueryHistory.success == True
+    ).count()
+    
+    return {
+        "total_queries": total_queries,
+        "successful_queries": successful_queries,
+        "success_rate": (successful_queries / total_queries * 100) if total_queries > 0 else 0
+    }
 
 @app.on_event("shutdown")
 async def shutdown_event():
