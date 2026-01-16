@@ -629,7 +629,7 @@ async def update_chat_session(session_id: int, session: dict):
         existing_session = db_session.query(ChatSession).filter(ChatSession.id == session_id).first()
         if not existing_session:
             raise HTTPException(status_code=404, detail="Chat session not found")
-        if existing_session.user_id != session.get("user_id"):
+        if cast(int, existing_session.user_id) != session.get("user_id"):
             raise HTTPException(status_code=403, detail="Unauthorized to update this session")
 
         if "title" in session:
@@ -663,7 +663,7 @@ async def delete_chat_session(
         chat_session = db_session.query(ChatSession).filter(ChatSession.id == session_id).first()
         if not chat_session:
             raise HTTPException(status_code=404, detail="Chat session not found")
-        if chat_session.user_id != user_id:
+        if cast(int, chat_session.user_id) != user_id:
             raise HTTPException(status_code=403, detail="Unauthorized to delete this session")
         db_session.delete(chat_session)
         db_session.commit()
