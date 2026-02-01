@@ -35,7 +35,7 @@ const RecommendationsPanel: React.FC<RecommendationsPanelProps> = ({
   const loadRecommendations = async () => {
     setIsLoading(true);
     try {
-      const response = await fetch(`http://localhost:8000/api/recommendations/${userId}`);
+      const response = await fetch(`https://query-genie-h0cy.onrender.com/api/recommendations/${userId}`);
       const data = await response.json();
       setRecommendations(data);
     } catch (error) {
@@ -51,7 +51,7 @@ const RecommendationsPanel: React.FC<RecommendationsPanelProps> = ({
     // Track usage if it's a template
     if (rec.type === 'template' && rec.id) {
       try {
-        await fetch(`http://localhost:8000/api/recommendations/${rec.id}/use`, {
+        await fetch(`https://query-genie-h0cy.onrender.com/api/recommendations/${rec.id}/use`, {
           method: 'POST',
         });
       } catch (error) {

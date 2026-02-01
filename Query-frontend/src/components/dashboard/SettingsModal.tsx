@@ -34,7 +34,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, userId }
 
   const loadSettings = async () => {
     try {
-      const response = await fetch(`http://localhost:8000/api/settings/${userId}`);
+      const response = await fetch(`https://query-genie-h0cy.onrender.com/api/settings/${userId}`);
       const data = await response.json();
       setSettings(data);
     } catch (error) {
@@ -45,7 +45,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, userId }
   const saveSettings = async () => {
     setIsLoading(true);
     try {
-      const response = await fetch(`http://localhost:8000/api/settings/${userId}`, {
+      const response = await fetch(`https://query-genie-h0cy.onrender.com/api/settings/${userId}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(settings),

@@ -144,7 +144,7 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
             const sql = sqlMatch[1];
             try {
               const response = await fetch(
-                `http://localhost:8000/api/favorites/${userId}/check?sql=${encodeURIComponent(sql)}`
+                `https://query-genie-h0cy.onrender.com/api/favorites/${userId}/check?sql=${encodeURIComponent(sql)}`
               );
               const data = await response.json();
               setFavoritedQueries(prev => ({ ...prev, [message.id]: data.is_favorite }));
@@ -168,7 +168,7 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
       // Remove from favorites
       try {
         const checkResponse = await fetch(
-          `http://localhost:8000/api/favorites/${userId}/check?sql=${encodeURIComponent(sqlQuery)}`
+          `https://query-genie-h0cy.onrender.com/api/favorites/${userId}/check?sql=${encodeURIComponent(sqlQuery)}`
         );
         
         if (!checkResponse.ok) {
@@ -179,7 +179,7 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
 
         if (checkData.favorite_id) {
           const deleteResponse = await fetch(
-            `http://localhost:8000/api/favorites/${checkData.favorite_id}?user_id=${userId}`, 
+            `https://query-genie-h0cy.onrender.com/api/favorites/${checkData.favorite_id}?user_id=${userId}`, 
             { method: 'DELETE' }
           );
           
@@ -217,7 +217,7 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
           description: '',
         };
         
-        const response = await fetch('http://localhost:8000/api/favorites', {
+        const response = await fetch('https://query-genie-h0cy.onrender.com/api/favorites', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload),
@@ -257,7 +257,7 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
 
   const handleExport = async (data: string[][], columns: string[], format: 'csv' | 'json') => {
     try {
-      const response = await fetch('http://localhost:8000/api/export', {
+      const response = await fetch('https://query-genie-h0cy.onrender.com/api/export', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ data, columns, format }),
