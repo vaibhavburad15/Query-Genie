@@ -126,7 +126,7 @@ const SignupForm = ({ onSwitchToLogin }: SignupFormProps) => {
         email: formData.email,
         password: formData.password,
         otp: formData.otp,
-        username: formData.email.split('@')[0], // Generate username from email
+        username: formData.email.split('@')[0], 
       });
       if (success) {
         toast({
@@ -229,7 +229,17 @@ const SignupForm = ({ onSwitchToLogin }: SignupFormProps) => {
                 className="absolute right-3 top-1/2 transform -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1"
                 disabled={isSendingOtp || isLoading || !!errors.email}
               >
-                {isSendingOtp ? <Loader2 className="w-4 h-4 animate-spin" /> : <Mail size={16} />}
+                {isSendingOtp ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    <span className="text-sm">Sending...</span>
+                  </>
+                ) : (
+                  <>
+                    <Mail size={16} />
+                    <span className="text-sm">Get OTP</span>
+                  </>
+                )}
               </button>
             )}
           </div>

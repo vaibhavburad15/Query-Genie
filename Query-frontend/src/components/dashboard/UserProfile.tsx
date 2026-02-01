@@ -1,22 +1,20 @@
-import { useAuth } from '@/contexts/AuthContext';
-import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
-import { LogOut, Trash2 } from 'lucide-react';
+import { Trash2, User, LogOut } from 'lucide-react';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator } from '@/components/ui/dropdown-menu';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
 import { useChatSession } from '@/hooks/useChatSession';
 import { useToast } from '@/hooks/use-toast';
+import { useAuth } from '@/contexts/AuthContext';
+import { useNavigate } from 'react-router-dom';
+import { useState } from 'react';
+import ProfileModal from './ProfileModal';
 
 const UserProfile = () => {
-  const { logout } = useAuth();
-  const navigate = useNavigate();
+  const { user, logout } = useAuth();
   const { deleteAllChats } = useChatSession();
   const { toast } = useToast();
-
-  const handleLogout = () => {
-    logout();
-    navigate('/auth');
-  };
+  const navigate = useNavigate();
+  const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
 
   const handleDeleteAllChats = async () => {
     try {
@@ -34,50 +32,47 @@ const UserProfile = () => {
     }
   };
 
+  const handleSignOut = () => {
+    logout();
+    navigate('/auth');
+  };
+
+  if (!user) return null;
+
   return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <Button
-          variant="ghost"
-          className="relative h-10 w-24 rounded bg-brand-100 hover:bg-brand-200 transition-colors flex items-center justify-center gap-2"
-        >
-          <LogOut className="h-4 w-4" />
-          Sign Out
-        </Button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end">
-        <AlertDialog>
-          <AlertDialogTrigger asChild>
-            <DropdownMenuItem 
-              onClick={(e) => e.preventDefault()}
-              className="cursor-pointer flex items-center"
-            >
-              <Trash2 className="mr-2 h-4 w-4 text-destructive" />
-              <span className="text-destructive">Delete All Chats</span>
-            </DropdownMenuItem>
-          </AlertDialogTrigger>
-          <AlertDialogContent>
-            <AlertDialogHeader>
-              <AlertDialogTitle>Delete All Chat History</AlertDialogTitle>
-              <AlertDialogDescription>
-                This action cannot be undone. This will permanently delete all your chat sessions and messages.
-              </AlertDialogDescription>
-            </AlertDialogHeader>
-            <AlertDialogFooter>
-              <AlertDialogCancel>Cancel</AlertDialogCancel>
-              <AlertDialogAction onClick={handleDeleteAllChats} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
-                Delete All
-              </AlertDialogAction>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialog>
-        <DropdownMenuSeparator />
-        <DropdownMenuItem onClick={handleLogout} className="flex items-center">
-          <LogOut className="mr-2 h-4 w-4" />
-          Sign Out
-        </DropdownMenuItem>
-      </DropdownMenuContent>
-    </DropdownMenu>
+    <>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button
+            variant="outline"
+            size="sm"
+            className="flex items-center gap-2 bg-white border-gray-200 hover:bg-gray-50 shadow-sm"
+          >
+            <User className="h-4 w-4 text-gray-600" />
+            <span className="text-sm font-medium text-gray-700">
+              {user.firstName} {user.lastName}
+            </span>
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="w-48">
+          <DropdownMenuItem onClick={() => setIsProfileModalOpen(true)}>
+            <User className="h-4 w-4 mr-2" />
+            Profile
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem onClick={handleSignOut} className="text-red-600">
+            <LogOut className="h-4 w-4 mr-2" />
+            Sign Out
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+
+      <ProfileModal
+        isOpen={isProfileModalOpen}
+        onClose={() => setIsProfileModalOpen(false)}
+        userId={user.id}
+      />
+    </>
   );
 };
 

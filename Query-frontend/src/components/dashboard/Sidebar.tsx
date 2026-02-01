@@ -51,9 +51,7 @@ const Sidebar = ({
   favoritesRefreshTrigger
 }: SidebarProps) => {
 
-  const handleSelectRecommendation = (question: string) => {
-    console.log('Selected recommendation:', question);
-  };
+  
 
   const handleSelectFavorite = (question: string) => {
     console.log('Selected favorite:', question);
@@ -66,16 +64,7 @@ const Sidebar = ({
       <div className="flex flex-col h-full">
         {/* Header */}
         <div className="flex items-center justify-between p-4 border-b border-border">
-          {!isCollapsed && (
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={onOpenSettings}
-              className="p-2 hover:bg-muted"
-            >
-              <Settings size={18} />
-            </Button>
-          )}
+          
           <Button
             variant="ghost"
             size="sm"
@@ -95,20 +84,15 @@ const Sidebar = ({
                 {isConnected ? (
                   <div className="space-y-3">
                     {/* Connection Info Card */}
-                    <div className="bg-green-50 border border-green-200 rounded-lg p-3">
+                  
                       <div className="flex items-start justify-between gap-2">
                         <div className="flex items-center gap-2 flex-1 min-w-0">
-                          <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse flex-shrink-0"></div>
+                         
                           <div className="flex-1 min-w-0">
-                            <p className="text-xs font-medium text-green-800 truncate">
-                              Connected to
-                            </p>
-                            <p className="text-sm font-semibold text-green-900 truncate">
-                              {connectedDatabase}
-                            </p>
-                          </div>
+                          
+                         
                         </div>
-                        <Database className="h-4 w-4 text-green-600 flex-shrink-0" />
+                        
                       </div>
                     </div>
 
@@ -124,7 +108,7 @@ const Sidebar = ({
                               className="flex-1 h-8 text-xs"
                             >
                               <RefreshCw size={12} className="mr-1.5" />
-                              Switch
+                              Switch Database 
                             </Button>
                           </TooltipTrigger>
                           <TooltipContent>

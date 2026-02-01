@@ -9,6 +9,7 @@ import { ThemeProvider } from "@/contexts/ThemeContext";
 import AuthPage from "./pages/AuthPage";
 import DashboardPage from "./pages/DashboardPage";
 import NotFound from "./pages/NotFound";
+import Index from "./pages/Index";
 
 const queryClient = new QueryClient();
 
@@ -58,8 +59,8 @@ const AppRoutes = () => (
       </PublicRoute>
     } />
 
-    {/* Root redirect */}
-    <Route path="/" element={<Navigate to="/dashboard" replace />} />
+    {/* Root - Landing Page */}
+    <Route path="/" element={<Index />} />
 
     {/* 404 */}
     <Route path="*" element={<NotFound />} />

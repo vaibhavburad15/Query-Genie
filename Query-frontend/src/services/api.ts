@@ -230,3 +230,18 @@ export const login = async (credentials: LoginData): Promise<AuthResponse> => {
     throw error;
   }
 };
+
+/**
+ * Gets user profile information.
+ * @param userId - The ID of the user.
+ * @returns A promise that resolves with the user profile data.
+ */
+export const getUserProfile = async (userId: number): Promise<AuthResponse> => {
+  try {
+    const { data } = await api.get(`/api/profile/${userId}`);
+    return data;
+  } catch (error) {
+    console.error("Failed to get user profile:", error);
+    throw error;
+  }
+};

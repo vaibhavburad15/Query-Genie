@@ -462,6 +462,25 @@ async def login_for_access_token(form_data: UserLogin, db: Session = Depends(get
         }
     }
 
+@app.get("/api/profile/{user_id}")
+async def get_user_profile(user_id: int, db: Session = Depends(get_db)):
+    """Get user profile information"""
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    return {
+        "success": True,
+        "user": {
+            "id": user.id,
+            "email": user.email,
+            "firstName": user.firstName,
+            "lastName": user.lastName,
+            "username": user.username,
+            "gender": user.gender
+        }
+    }
+
 @app.post("/api/list-databases")
 async def list_databases(config: ServerConnectionConfig):
     """Connect to MySQL server and list all available databases"""
@@ -564,7 +583,103 @@ async def disconnect_db():
     except Exception as e:
         print(f"Database disconnect failed: {str(e)}")
         return {"success": False, "error": str(e)}
+@app.get("/api/table-schema/{table_name}")
+async def get_table_schema(table_name: str):
+    """Get detailed schema information for a specific table"""
+    if not hasattr(app.state, "db_uri"):
+        raise HTTPException(status_code=400, detail="Database not connected")
+    
+    try:
+        db = SQLDatabase.from_uri(app.state.db_uri)
+        connection = db._engine.connect()
+        
+        # Get column information using DESCRIBE
+        result = connection.execute(text(f"DESCRIBE `{table_name}`"))
+        columns_data = result.fetchall()
+        
+        columns = []
+        for row in columns_data:
+            # row format: (Field, Type, Null, Key, Default, Extra)
+            columns.append({
+                "name": row[0],
+                "type": row[1],
+                "nullable": row[2] == "YES",
+                "key": row[3] if row[3] else None,  # PRI, MUL, UNI
+                "default": row[4],
+                "autoincrement": "auto_increment" in str(row[5]).lower() if row[5] else False
+            })
+        
+        connection.close()
+        
+        return {
+            "success": True,
+            "table_name": table_name,
+            "columns": columns
+        }
+        
+    except Exception as e:
+        print(f"Error fetching schema for {table_name}: {str(e)}")
+        return {"success": False, "error": str(e)}
 
+
+@app.get("/api/database-tables")
+async def get_database_tables():
+    """Get all tables with their row counts and metadata"""
+    if not hasattr(app.state, "db_uri"):
+        raise HTTPException(status_code=400, detail="Database not connected")
+    
+    try:
+        db = SQLDatabase.from_uri(app.state.db_uri)
+        connection = db._engine.connect()
+        
+        # Get all table names
+        result = connection.execute(text("SHOW TABLES"))
+        table_names = [row[0] for row in result.fetchall()]
+        
+        tables_info = []
+        
+        for table_name in table_names:
+            try:
+                # Get row count
+                count_result = connection.execute(text(f"SELECT COUNT(*) FROM `{table_name}`"))
+                count_row = count_result.fetchone()
+                row_count = count_row[0] if count_row else 0
+                
+                # Get table status for last update time
+                status_result = connection.execute(text(f"SHOW TABLE STATUS LIKE '{table_name}'"))
+                status_row = status_result.fetchone()
+                
+                last_updated = "just now"
+                if status_row and len(status_row) > 12 and status_row[12]:
+                    # Update_time is at index 12
+                    last_updated = str(status_row[12])
+                
+                tables_info.append({
+                    "name": table_name,
+                    "rowCount": row_count,
+                    "lastUpdated": last_updated
+                })
+                
+            except Exception as table_error:
+                print(f"Error processing table {table_name}: {str(table_error)}")
+                tables_info.append({
+                    "name": table_name,
+                    "rowCount": 0,
+                    "lastUpdated": "unknown"
+                })
+        
+        connection.close()
+        
+        return {
+            "success": True,
+            "tables": tables_info,
+            "total": len(tables_info)
+        }
+        
+    except Exception as e:
+        print(f"Error fetching database tables: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+    
 @app.post("/api/chat")
 async def chat_endpoint(request: ChatRequest):
     if not hasattr(app.state, "db_uri"):

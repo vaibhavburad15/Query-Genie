@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useToast } from '@/hooks/use-toast';
 import { useChatSession } from '@/hooks/useChatSession';
 import { useAuth } from '@/contexts/AuthContext';
@@ -6,14 +7,13 @@ import Sidebar from '@/components/dashboard/Sidebar';
 import ChatInput from '@/components/dashboard/ChatInput';
 import ChatWindow from '@/components/dashboard/ChatWindow';
 import UserProfile from '@/components/dashboard/UserProfile';
-import Logo from '@/components/Logo';
-import { DatabaseConnectionModal } from '@/components/dashboard/DatabaseConnectionModal';
+import { DatabaseConnectionModal, DatabaseConnectionData } from '@/components/dashboard/DatabaseConnectionModal';
 import TipNotification from '@/components/dashboard/TipNotification';
-import SettingsModal from '@/components/dashboard/SettingsModal';
 
 const DashboardPage = () => {
   const { toast } = useToast();
   const { user } = useAuth();
+  const navigate = useNavigate();
   const {
     chatSessions,
     currentChatId,
@@ -32,13 +32,11 @@ const DashboardPage = () => {
   const [connectedDatabase, setConnectedDatabase] = React.useState<string | null>(null);
   const [isModalOpen, setIsModalOpen] = React.useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = React.useState(false);
+  const [databaseTables, setDatabaseTables] = React.useState<Array<{ name: string; rowCount: number; lastUpdated: string }>>([]);
   
-  // New states for features
   const [showTip, setShowTip] = useState(false);
   const [currentTip, setCurrentTip] = useState<any>(null);
   const [userSettings, setUserSettings] = useState<any>(null);
-  
-  // ✅ ADD THIS: Refresh trigger for favorites
   const [favoritesRefreshTrigger, setFavoritesRefreshTrigger] = useState(0);
 
   // Load daily tip on mount
@@ -49,14 +47,11 @@ const DashboardPage = () => {
         const tip = await response.json();
         setCurrentTip(tip);
         setShowTip(true);
-        
-        // Auto-hide after 10 seconds
         setTimeout(() => setShowTip(false), 10000);
       } catch (error) {
         console.error('Failed to load tip:', error);
       }
     };
-
     loadDailyTip();
   }, []);
 
@@ -64,7 +59,6 @@ const DashboardPage = () => {
   useEffect(() => {
     const loadSettings = async () => {
       if (!user?.id) return;
-      
       try {
         const response = await fetch(`http://localhost:8000/api/settings/${user.id}`);
         const settings = await response.json();
@@ -73,19 +67,62 @@ const DashboardPage = () => {
         console.error('Failed to load settings:', error);
       }
     };
-
     loadSettings();
   }, [user?.id]);
 
-  // ✅ ADD THIS: Function to refresh favorites
   const refreshFavorites = () => {
     setFavoritesRefreshTrigger(prev => prev + 1);
   };
 
-  const handleConnectSuccess = async (databaseName: string) => {
+  const fetchDatabaseTables = async () => {
+    try {
+      console.log('🔍 Fetching database tables from new endpoint...');
+      
+      const response = await fetch('http://localhost:8000/api/database-tables');
+      
+      if (!response.ok) {
+        throw new Error('Failed to fetch tables');
+      }
+      
+      const data = await response.json();
+      
+      if (data.success && data.tables) {
+        console.log(`✅ Successfully fetched ${data.total} tables:`, data.tables);
+        setDatabaseTables(data.tables);
+        
+        toast({
+          title: "✅ Tables Loaded",
+          description: `Found ${data.total} table${data.total !== 1 ? 's' : ''} in the database`,
+        });
+      } else {
+        console.warn('⚠️ No tables found or empty response');
+        setDatabaseTables([]);
+      }
+    } catch (error) {
+      console.error('❌ Error fetching tables:', error);
+      toast({
+        title: "Warning",
+        description: "Could not fetch table information. Connection is active but table list unavailable.",
+        variant: "default",
+      });
+      setDatabaseTables([]);
+    }
+  };
+
+  const handleConnect = async (data: DatabaseConnectionData) => {
+    console.log('✅ Connection successful:', data);
     setIsConnected(true);
-    setConnectedDatabase(databaseName);
+    setConnectedDatabase(data.database);
+    
+    await fetchDatabaseTables();
+    
+    setIsModalOpen(false);
     await createNewChat();
+    
+    toast({
+      title: "✅ Connected!",
+      description: `Connected to ${data.database} successfully.`,
+    });
   };
 
   const handleOpenModal = () => {
@@ -199,6 +236,7 @@ const DashboardPage = () => {
       if (response.ok) {
         setIsConnected(false);
         setConnectedDatabase(null);
+        setDatabaseTables([]);
         toast({
           title: "Database Disconnected",
           description: "Successfully disconnected from the database.",
@@ -217,7 +255,6 @@ const DashboardPage = () => {
 
   return (
     <div className="h-screen flex flex-col bg-background">
-      {/* Tip Notification */}
       {showTip && currentTip && userSettings?.show_tips !== false && (
         <TipNotification
           tip={currentTip}
@@ -240,15 +277,11 @@ const DashboardPage = () => {
           onDeleteChat={handleDeleteChat}
           userId={user?.id || 1}
           onOpenSettings={() => setIsSettingsOpen(true)}
-          favoritesRefreshTrigger={favoritesRefreshTrigger} // ✅ Pass the trigger
+          favoritesRefreshTrigger={favoritesRefreshTrigger}
         />
 
         <div className="flex-1 flex flex-col relative">
-          <header className="flex items-center justify-between p-4 border-b border-border bg-surface">
-            <Logo size="lg" />
-            <UserProfile />
-          </header>
-
+          {/* Removed header navigation bar */}
           <ChatWindow
             messages={messages.map((msg, idx) => ({
               ...msg,
@@ -262,7 +295,10 @@ const DashboardPage = () => {
             userId={user?.id || 1}
             currentQuestion={messages.length > 0 ? messages[messages.length - 1]?.content : ''}
             refreshFavorites={refreshFavorites}
-            onFavoriteToggle={refreshFavorites} // ✅ Pass the refresh function
+            onFavoriteToggle={refreshFavorites}
+            isConnected={isConnected}
+            connectedDatabase={connectedDatabase || ''}
+            databaseTables={databaseTables}
           />
 
           <ChatInput
@@ -281,13 +317,7 @@ const DashboardPage = () => {
       <DatabaseConnectionModal
         isOpen={isModalOpen}
         onClose={() => setIsModalOpen(false)}
-        onConnectSuccess={handleConnectSuccess}
-      />
-
-      <SettingsModal
-        isOpen={isSettingsOpen}
-        onClose={() => setIsSettingsOpen(false)}
-        userId={user?.id || 1}
+        onConnect={handleConnect}
       />
     </div>
   );
