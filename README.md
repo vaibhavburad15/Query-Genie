@@ -3,7 +3,6 @@
 
 Query Genie is an intelligent database assistant that allows users to interact with their databases using natural language. Powered by AI, it converts your questions into SQL queries and presents results in beautiful, interactive tables.
 
-![Query Genie Demo](https://via.placeholder.com/800x400?text=Query+Genie+Demo)
 
 ## ✨ Features
 
@@ -180,13 +179,9 @@ For questions or support, please open an issue on GitHub.
 
 - [ ] Support for PostgreSQL and SQLite
 - [ ] Excel/CSV file upload and querying
-- [ ] Data visualization charts
-- [ ] Query history and favorites
 - [ ] Multi-user collaboration
 - [ ] Query templates library
-- [ ] Export results to various formats
 - [ ] Dark mode support
-- [ ] Mobile app version
 
 ## 📝 License
 
@@ -194,4 +189,4 @@ For questions or support, please open an issue on GitHub.
 
 👤 Author Vaibhav burad GitHub: https://github.com/vaibhavburad15 Linkedin: https://www.linkedin.com/in/vaibhav-burad-278414243/
 
-Made with ❤️ by the Query Genie Team
+Made with ❤️ by the Vaibhav burad
