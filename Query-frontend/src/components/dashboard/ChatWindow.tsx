@@ -1,12 +1,22 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, memo, useCallback } from 'react';
 import { AlertCircle, Database, Table, BarChart3, Heart, Download, PieChart, ChevronDown, LogOut } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Skeleton } from '@/components/ui/skeleton';
 import SqlQueryViewer from './SqlQueryViewer';
 import EnhancedDataTable from './EnhancedDataTable';
 import ChartVisualization from './ChartVisualization';
 import ConnectionStatusPopup from './ConnectionStatusPopup';
 import UserProfile from './UserProfile';
 import { useToast } from '@/hooks/use-toast';
+
+// ChatWindowSkeleton component for loading states
+export const ChatWindowSkeleton = () => (
+  <div className="space-y-4 p-4">
+    <Skeleton className="h-20 w-full" />
+    <Skeleton className="h-20 w-3/4" />
+    <Skeleton className="h-32 w-full" />
+  </div>
+);
 
 // Helper function to parse SQL output string to structured data
 function parseSqlOutput(output: string): {
@@ -81,7 +91,7 @@ interface ChatWindowProps {
   databaseTables?: Array<{ name: string; rowCount: number; lastUpdated: string }>;
 }
 
-const ChatWindow: React.FC<ChatWindowProps> = ({
+const ChatWindow: React.FC<ChatWindowProps> = memo(({
   messages,
   onConnectDatabase,
   onConfirmSql,
@@ -100,6 +110,27 @@ const ChatWindow: React.FC<ChatWindowProps> = ({
   const [viewMode, setViewMode] = useState<Record<string, 'table' | 'chart'>>({});
   const [connectionStatusOpen, setConnectionStatusOpen] = useState(false);
   const { toast } = useToast();
+
+  // ✅ Memoized callbacks to prevent unnecessary re-renders
+  const handleConnectDatabase = useCallback(() => {
+    onConnectDatabase();
+  }, [onConnectDatabase]);
+
+  const handleConfirmSql = useCallback((sql: string) => {
+    onConfirmSql(sql);
+  }, [onConfirmSql]);
+
+  const handleCancelSql = useCallback(() => {
+    onCancelSql();
+  }, [onCancelSql]);
+
+  const handleRefreshFavorites = useCallback(() => {
+    refreshFavorites();
+  }, [refreshFavorites]);
+
+  const handleFavoriteToggle = useCallback(() => {
+    onFavoriteToggle?.();
+  }, [onFavoriteToggle]);
 
   console.log('Rendering ChatWindow with messages:', messages);
 
@@ -423,7 +454,7 @@ const ChatWindow: React.FC<ChatWindowProps> = ({
                               variant="destructive"
                               onClick={() => {
                                 setConfirmationHandled(prev => ({ ...prev, [message.id]: true }));
-                                onConfirmSql(parsedOutput.sql!);
+                                handleConfirmSql(parsedOutput.sql!);
                               }}
                               className="shadow-lg"
                             >
@@ -434,7 +465,7 @@ const ChatWindow: React.FC<ChatWindowProps> = ({
                               variant="outline"
                               onClick={() => {
                                 setConfirmationHandled(prev => ({ ...prev, [message.id]: true }));
-                                onCancelSql();
+                                handleCancelSql();
                               }}
                             >
                               Cancel
@@ -647,7 +678,7 @@ const ChatWindow: React.FC<ChatWindowProps> = ({
                           <div className="space-y-3">
                             <p className="font-semibold">{message.content}</p>
                             <Button
-                              onClick={onConnectDatabase}
+                              onClick={handleConnectDatabase}
                               variant="outline"
                               size="sm"
                               className="border-red-300 text-red-800 hover:bg-red-100 shadow-sm"
@@ -670,6 +701,16 @@ const ChatWindow: React.FC<ChatWindowProps> = ({
       </div>
     </>
   );
-};
+}, (prevProps, nextProps) => {
+  // ✅ Custom comparison - only re-render if critical props changed
+  return (
+    prevProps.messages === nextProps.messages &&
+    prevProps.isConnected === nextProps.isConnected &&
+    prevProps.connectedDatabase === nextProps.connectedDatabase &&
+    prevProps.databaseTables === nextProps.databaseTables &&
+    prevProps.userId === nextProps.userId &&
+    prevProps.currentQuestion === nextProps.currentQuestion
+  );
+});
 
 export default ChatWindow;

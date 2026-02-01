@@ -1,10 +1,11 @@
 // src/components/ChatInput.tsx
 
-import React, { useState } from 'react';
+import React, { useState, memo, useCallback } from 'react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Plus, Send, Loader2 } from 'lucide-react';
-import { sendChatMessage, ChatRequestPayload } from '@/services/api';
+import { ChatRequestPayload } from '@/services/api';
+import { useSendChatMessage } from '@/hooks/useQueryCache';
 
 // Define the shape of a chat message
 export interface ChatMessage {
@@ -24,7 +25,7 @@ interface ChatInputProps {
   renameCurrentChat: (title: string) => void;
 }
 
-const ChatInput = ({ 
+const ChatInput = memo(({
   chatHistory, 
   setChatHistory, 
   isLoading, 
@@ -35,6 +36,12 @@ const ChatInput = ({
   renameCurrentChat 
 }: ChatInputProps) => {
   const [message, setMessage] = useState('');
+  const sendChatMutation = useSendChatMessage();
+
+  // ✅ Memoized callbacks
+  const handleSetChatHistory = useCallback(setChatHistory, [setChatHistory]);
+  const handleSetIsLoading = useCallback(setIsLoading, [setIsLoading]);
+  const handleRenameCurrentChat = useCallback(renameCurrentChat, [renameCurrentChat]);
 
   const handleSubmit = async () => {
     if (!message.trim() || isLoading || !isConnected) return;
@@ -45,13 +52,13 @@ const ChatInput = ({
     const currentChat = chatSessions.find(chat => chat.id === currentChatId);
     if (currentChat && currentChat.title === "New Chat") {
       const title = message.length > 40 ? message.slice(0, 40) + "..." : message;
-      await renameCurrentChat(title);
+      await handleRenameCurrentChat(title);
     }
 
     // Add user message to chat history
-    setChatHistory(prev => [...prev, userMessage]);
+    handleSetChatHistory(prev => [...prev, userMessage]);
 
-    setIsLoading(true);
+    handleSetIsLoading(true);
     setMessage('');
 
     try {
@@ -67,19 +74,19 @@ const ChatInput = ({
 
       console.log('Sending payload to backend:', payload);
 
-      const data = await sendChatMessage(payload);
+      const data = await sendChatMutation.mutateAsync(payload);
 
       console.log('Backend response:', data);
 
       if (data.success && data.response) {
         const aiMessage: ChatMessage = { role: 'ai', content: data.response };
-        setChatHistory(prevHistory => [...prevHistory, aiMessage]);
+        handleSetChatHistory(prevHistory => [...prevHistory, aiMessage]);
       } else {
         const errorMessage: ChatMessage = { 
           role: 'ai', 
           content: `Error: ${data.error || 'Unknown error occurred'}` 
         };
-        setChatHistory(prevHistory => [...prevHistory, errorMessage]);
+        handleSetChatHistory(prevHistory => [...prevHistory, errorMessage]);
       }
 
     } catch (error) {
@@ -92,9 +99,9 @@ const ChatInput = ({
       }
       
       const errorMessage: ChatMessage = { role: 'ai', content: errorText };
-      setChatHistory(prevHistory => [...prevHistory, errorMessage]);
+      handleSetChatHistory(prevHistory => [...prevHistory, errorMessage]);
     } finally {
-      setIsLoading(false);
+      handleSetIsLoading(false);
     }
   };
 
@@ -153,6 +160,14 @@ const ChatInput = ({
       </form>
     </div>
   );
-};
+}, (prevProps, nextProps) => {
+  // ✅ Custom comparison - only re-render if critical props changed
+  return (
+    prevProps.isLoading === nextProps.isLoading &&
+    prevProps.isConnected === nextProps.isConnected &&
+    prevProps.currentChatId === nextProps.currentChatId &&
+    prevProps.chatSessions === nextProps.chatSessions
+  );
+});
 
 export default ChatInput;

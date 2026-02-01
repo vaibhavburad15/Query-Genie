@@ -11,3 +11,5 @@ langchain-community==0.3.0
 langchain-groq==0.2.0
 langchain-core==0.3.0
 python-multipart==0.0.12
+slowapi==0.1.9
+email-validator==2.1.0

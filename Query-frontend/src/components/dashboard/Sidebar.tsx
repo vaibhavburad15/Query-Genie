@@ -9,6 +9,7 @@ import {
   DropdownMenuTrigger,
   DropdownMenuSeparator 
 } from '@/components/ui/dropdown-menu';
+import { memo, useCallback } from 'react';
 import FavoritesPanel from './FavoritesPanel';
 
 interface ChatSession {
@@ -34,7 +35,7 @@ interface SidebarProps {
   favoritesRefreshTrigger?: number;
 }
 
-const Sidebar = ({ 
+const Sidebar = memo(({
   isCollapsed, 
   onToggleCollapse, 
   isConnected, 
@@ -331,6 +332,17 @@ const Sidebar = ({
       </div>
     </div>
   );
-};
+}, (prevProps, nextProps) => {
+  // ✅ Custom comparison - only re-render if critical props changed
+  return (
+    prevProps.isCollapsed === nextProps.isCollapsed &&
+    prevProps.isConnected === nextProps.isConnected &&
+    prevProps.connectedDatabase === nextProps.connectedDatabase &&
+    prevProps.chatSessions === nextProps.chatSessions &&
+    prevProps.currentChatId === nextProps.currentChatId &&
+    prevProps.userId === nextProps.userId &&
+    prevProps.favoritesRefreshTrigger === nextProps.favoritesRefreshTrigger
+  );
+});
 
 export default Sidebar;

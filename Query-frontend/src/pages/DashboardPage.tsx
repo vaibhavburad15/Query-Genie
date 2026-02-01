@@ -1,14 +1,30 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, Suspense, lazy } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useToast } from '@/hooks/use-toast';
 import { useChatSession } from '@/hooks/useChatSession';
 import { useAuth } from '@/contexts/AuthContext';
+import { LoadingSpinner } from '@/components/ui/loading-spinner';
 import Sidebar from '@/components/dashboard/Sidebar';
 import ChatInput from '@/components/dashboard/ChatInput';
-import ChatWindow from '@/components/dashboard/ChatWindow';
-import UserProfile from '@/components/dashboard/UserProfile';
-import { DatabaseConnectionModal, DatabaseConnectionData } from '@/components/dashboard/DatabaseConnectionModal';
 import TipNotification from '@/components/dashboard/TipNotification';
+
+// ✅ Lazy load heavy components
+const ChatWindow = lazy(() => import('@/components/dashboard/ChatWindow'));
+const UserProfile = lazy(() => import('@/components/dashboard/UserProfile'));
+const DatabaseConnectionModal = lazy(() => import('@/components/dashboard/DatabaseConnectionModal').then(module => ({ default: module.DatabaseConnectionModal })));
+
+// Import ChatWindowSkeleton for loading states
+const ChatWindowSkeleton = lazy(() => import('@/components/dashboard/ChatWindow').then(module => ({ default: module.ChatWindowSkeleton })));
+
+// Import types
+type DatabaseConnectionData = {
+  type: string;
+  host: string;
+  port: string;
+  user: string;
+  password: string;
+  database: string;
+};
 
 const DashboardPage = () => {
   const { toast } = useToast();
@@ -282,24 +298,26 @@ const DashboardPage = () => {
 
         <div className="flex-1 flex flex-col relative">
           {/* Removed header navigation bar */}
-          <ChatWindow
-            messages={messages.map((msg, idx) => ({
-              ...msg,
-              id: (msg as any).id ?? String(idx),
-              type: (msg as any).type ?? (msg.role === 'user' ? 'user' : 'assistant'),
-              timestamp: (msg as any).timestamp ?? new Date().toISOString(),
-            }))}
-            onConnectDatabase={handleOpenModal}
-            onConfirmSql={handleConfirmSql}
-            onCancelSql={handleCancelSql}
-            userId={user?.id || 1}
-            currentQuestion={messages.length > 0 ? messages[messages.length - 1]?.content : ''}
-            refreshFavorites={refreshFavorites}
-            onFavoriteToggle={refreshFavorites}
-            isConnected={isConnected}
-            connectedDatabase={connectedDatabase || ''}
-            databaseTables={databaseTables}
-          />
+          <Suspense fallback={<ChatWindowSkeleton />}>
+            <ChatWindow
+              messages={messages.map((msg, idx) => ({
+                ...msg,
+                id: (msg as any).id ?? String(idx),
+                type: (msg as any).type ?? (msg.role === 'user' ? 'user' : 'assistant'),
+                timestamp: (msg as any).timestamp ?? new Date().toISOString(),
+              }))}
+              onConnectDatabase={handleOpenModal}
+              onConfirmSql={handleConfirmSql}
+              onCancelSql={handleCancelSql}
+              userId={user?.id || 1}
+              currentQuestion={messages.length > 0 ? messages[messages.length - 1]?.content : ''}
+              refreshFavorites={refreshFavorites}
+              onFavoriteToggle={refreshFavorites}
+              isConnected={isConnected}
+              connectedDatabase={connectedDatabase || ''}
+              databaseTables={databaseTables}
+            />
+          </Suspense>
 
           <ChatInput
             chatHistory={messages}
@@ -314,11 +332,13 @@ const DashboardPage = () => {
         </div>
       </div>
 
-      <DatabaseConnectionModal
-        isOpen={isModalOpen}
-        onClose={() => setIsModalOpen(false)}
-        onConnect={handleConnect}
-      />
+      <Suspense fallback={<LoadingSpinner size="md" />}>
+        <DatabaseConnectionModal
+          isOpen={isModalOpen}
+          onClose={() => setIsModalOpen(false)}
+          onConnect={handleConnect}
+        />
+      </Suspense>
     </div>
   );
 };

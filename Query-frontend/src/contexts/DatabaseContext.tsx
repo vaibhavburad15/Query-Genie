@@ -20,13 +20,14 @@ export const DatabaseProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     setDatabaseInfo(data);
     setIsConnected(true);
 
-    // Store connection info (without password for security)
+    // ✅ FIX: NEVER store password in localStorage
     localStorage.setItem('dbConnection', JSON.stringify({
       host: data.host,
       port: data.port,
       user: data.user,
       database: data.database,
       type: data.type
+      // PASSWORD REMOVED!
     }));
   }, []);
 
@@ -34,10 +35,13 @@ export const DatabaseProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     console.log('🔌 Disconnecting from database');
     
     try {
-      // Call backend disconnect endpoint
+      const token = localStorage.getItem('auth_token');
       await fetch('http://localhost:8000/api/disconnect', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' }
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}` // ✅ Add auth token
+        }
       });
     } catch (error) {
       console.error('Error disconnecting:', error);
