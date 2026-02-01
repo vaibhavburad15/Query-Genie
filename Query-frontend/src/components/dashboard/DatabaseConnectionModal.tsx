@@ -9,7 +9,7 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useConnectDatabase } from '@/hooks/useQueryCache';
 
-const API_BASE = "http://localhost:8000";
+const API_BASE = "https://query-genie-h0cy.onrender.com";
 
 interface DatabaseConnectionModalProps {
   isOpen: boolean;
