@@ -7,6 +7,7 @@ import { Database, Loader2, CheckCircle, AlertCircle, Lightbulb, XCircle, WifiOf
 import { useToast } from '@/hooks/use-toast';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { useConnectDatabase } from '@/hooks/useQueryCache';
 
 const API_BASE = "http://localhost:8000";
 
@@ -57,10 +58,10 @@ export const DatabaseConnectionModal = ({ isOpen, onClose, onConnect }: Database
 
   // UI state
   const [isLoadingDatabases, setIsLoadingDatabases] = useState(false);
-  const [isConnecting, setIsConnecting] = useState(false);
   const [connectionError, setConnectionError] = useState<ConnectionError | null>(null);
   
   const { toast } = useToast();
+  const connectMutation = useConnectDatabase();
 
   const handleCredentialsChange = (field: keyof DBCredentials, value: string) => {
     setCredentials(prev => ({ ...prev, [field]: value }));
@@ -285,37 +286,17 @@ export const DatabaseConnectionModal = ({ isOpen, onClose, onConnect }: Database
     }
 
     setConnectionError(null);
-    setIsConnecting(true);
 
     const portNum = parseInt(credentials.port, 10);
 
     try {
-      const response = await fetch(`${API_BASE}/api/connect`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          host: credentials.host.trim(),
-          port: portNum,
-          user: credentials.user.trim(),
-          password: credentials.password,
-          database: selectedDatabase
-        })
+      const data = await connectMutation.mutateAsync({
+        host: credentials.host.trim(),
+        port: portNum,
+        user: credentials.user.trim(),
+        password: credentials.password,
+        database: selectedDatabase
       });
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        if (data.detail && typeof data.detail === 'object') {
-          setConnectionError(data.detail);
-        } else {
-          setConnectionError({
-            error: "Connection Error",
-            message: data.message || 'Failed to connect to database',
-            code: "UNKNOWN_ERROR"
-          });
-        }
-        return;
-      }
 
       if (data.success) {
         toast({
@@ -334,6 +315,12 @@ export const DatabaseConnectionModal = ({ isOpen, onClose, onConnect }: Database
         });
         
         handleClose();
+      } else {
+        setConnectionError({
+          error: "Connection Error",
+          message: data.error || 'Failed to connect to database',
+          code: "UNKNOWN_ERROR"
+        });
       }
     } catch (error: any) {
       console.error('Error connecting to database:', error);
@@ -348,8 +335,6 @@ export const DatabaseConnectionModal = ({ isOpen, onClose, onConnect }: Database
         title: "Network Error",
         description: "Cannot connect to backend server",
       });
-    } finally {
-      setIsConnecting(false);
     }
   };
 
@@ -442,7 +427,7 @@ export const DatabaseConnectionModal = ({ isOpen, onClose, onConnect }: Database
   };
 
   const handleKeyPress = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !isLoadingDatabases && !isConnecting) {
+    if (e.key === 'Enter' && !isLoadingDatabases && !connectMutation.isPending) {
       if (currentStep === 'credentials') {
         handleListDatabases();
       } else if (selectedDatabase) {
@@ -635,7 +620,7 @@ export const DatabaseConnectionModal = ({ isOpen, onClose, onConnect }: Database
                   <Select
                     value={selectedDatabase}
                     onValueChange={setSelectedDatabase}
-                    disabled={isConnecting}
+                    disabled={connectMutation.isPending}
                   >
                     <SelectTrigger id="database" className="w-full font-mono">
                       <SelectValue placeholder="Choose a database..." />
@@ -661,7 +646,7 @@ export const DatabaseConnectionModal = ({ isOpen, onClose, onConnect }: Database
                   variant="outline"
                   className="w-full"
                   onClick={openCreateDialog}
-                  disabled={isConnecting}
+                  disabled={connectMutation.isPending}
                 >
                   <Plus className="w-4 h-4 mr-2" />
                   Create New Database
@@ -672,17 +657,17 @@ export const DatabaseConnectionModal = ({ isOpen, onClose, onConnect }: Database
                   <Button 
                     variant="outline" 
                     onClick={handleBack} 
-                    disabled={isConnecting}
+                    disabled={connectMutation.isPending}
                   >
                     <ChevronLeft className="w-4 h-4 mr-2" />
                     Back
                   </Button>
                   <Button 
                     onClick={handleConnect} 
-                    disabled={!selectedDatabase || isConnecting}
+                    disabled={!selectedDatabase || connectMutation.isPending}
                     className="min-w-[120px]"
                   >
-                    {isConnecting ? (
+                    {connectMutation.isPending ? (
                       <>
                         <Loader2 className="w-4 h-4 mr-2 animate-spin" />
                         Connecting...

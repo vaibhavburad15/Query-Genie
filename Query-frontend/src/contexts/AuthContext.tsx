@@ -97,22 +97,22 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     setIsLoading(true);
     try {
       const response = await apiSignup(userData);
-      if (response.success) {
+      if (response.success && response.user) {
+        // ✅ FIX: Use actual user ID from backend
         const newUser: User = {
-          id: Date.now(), // Temporary ID
-          email: userData.email,
-          firstName: userData.firstName,
-          lastName: userData.lastName,
-          username: userData.username,
-          contactNumber: '', // Would come from backend
-          gender: userData.gender,
+          id: response.user.id, // Use backend ID instead of Date.now()
+          email: response.user.email,
+          firstName: response.user.firstName,
+          lastName: response.user.lastName,
+          username: response.user.username,
+          contactNumber: response.user.contactNumber || '',
+          gender: response.user.gender,
         };
 
         setUser(newUser);
         setIsAuthenticated(true);
         setJustLoggedIn(true);
 
-        // Store in localStorage
         localStorage.setItem('user', JSON.stringify(newUser));
         localStorage.setItem('isAuthenticated', 'true');
 

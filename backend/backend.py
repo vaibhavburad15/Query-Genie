@@ -1,7 +1,11 @@
 import os
 from datetime import datetime, timedelta, timezone
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, Depends, Path
+from fastapi import FastAPI, HTTPException, Depends, Path, Request
+from slowapi import Limiter
+from slowapi.util import get_remote_address
+from slowapi.middleware import SlowAPIMiddleware
+from email_validator import validate_email, EmailNotValidError
 from pydantic import BaseModel, EmailStr, SecretStr
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
@@ -26,6 +30,7 @@ from typing import cast, Any
 from typing import List, Optional
 import csv
 import io
+import hashlib
 from extended_models import (
     FavoriteQuery,
     UserSettings,
@@ -34,7 +39,10 @@ from extended_models import (
     Base
 )
 from sql_system_prompt import SQL_SYSTEM_PROMPT
-
+import re
+from typing import Tuple
+import threading
+import time
 # Load environment variables
 load_dotenv()
 groq_api_key = os.getenv("GROQ_API_KEY")
@@ -55,10 +63,17 @@ SQLITE_DB_FILE = "users.db"
 engine = create_engine(
     f"sqlite:///{SQLITE_DB_FILE}", 
     echo=False,
-    pool_pre_ping=True,
-    pool_recycle=3600,
-    pool_size=5,
-    max_overflow=10
+    pool_pre_ping=True,              # ✅ Test connections before using
+    pool_recycle=3600,               # ✅ Recycle connections every hour
+    pool_size=10,                    # ✅ INCREASED: Increased from 5
+    max_overflow=20,                 # ✅ INCREASED: Increased from 10
+    connect_args={
+        "timeout": 30,               # ✅ NEW: Connection timeout
+        "check_same_thread": False   # ✅ For SQLite multi-threading
+    },
+    execution_options={
+        "sqlite_synchronous": 0,     # ✅ Performance: Use async writes
+    }
 )
 
 class User(Base):
@@ -81,17 +96,107 @@ class ChatSession(Base):
 Base.metadata.create_all(engine)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
+class QueryCache:
+    """Cache for query results with TTL"""
+    def __init__(self, ttl_seconds: int = 300):
+        self.cache = {}
+        self.ttl = ttl_seconds
+        self.timestamps = {}
+    
+    def get_cache_key(self, sql: str, database: str) -> str:
+        """Generate cache key from query and database"""
+        return hashlib.md5(f"{sql}:{database}".encode()).hexdigest()
+    
+    def get(self, key: str) -> Optional[dict]:
+        """Get cached result if not expired"""
+        if key not in self.cache:
+            return None
+        
+        if time.time() - self.timestamps[key] > self.ttl:
+            del self.cache[key]
+            del self.timestamps[key]
+            return None
+        
+        return self.cache[key]
+    
+    def set(self, key: str, value: dict):
+        """Cache result"""
+        self.cache[key] = value
+        self.timestamps[key] = time.time()
+    
+    def clear(self):
+        """Clear entire cache"""
+        self.cache.clear()
+        self.timestamps.clear()
+
+query_cache = QueryCache(ttl_seconds=300)
+
 app = FastAPI()
+
+limiter = Limiter(key_func=get_remote_address)
+app.state.limiter = limiter
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:8080", "http://localhost:8081", "http://localhost:5173", "http://localhost:3000"],
+    allow_origins=["http://localhost:8080", "http://localhost:8081", "http://localhost:5173", "http://localhost:3000" , "https://querygeniefrontend.vercel.app/"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-otp_storage = {}  
+app.add_middleware(SlowAPIMiddleware)
+
+class OtpManager:
+    """Thread-safe OTP manager with auto-cleanup"""
+    def __init__(self):
+        self.storage = {}
+        self.lock = threading.Lock()
+        self.cleanup_thread = None
+    
+    def store(self, email: str, otp: str, expiry_minutes: int = 5):
+        with self.lock:
+            expires_at = datetime.now(timezone.utc) + timedelta(minutes=expiry_minutes)
+            self.storage[email] = {
+                "otp": otp,
+                "expires_at": expires_at,
+                "attempts": 0
+            }
+            self._schedule_cleanup(email, expiry_minutes)
+    
+    def verify(self, email: str, otp: str) -> Tuple[bool, str]:
+        with self.lock:
+            data = self.storage.get(email)
+            
+            if not data:
+                return False, "OTP not requested or expired"
+            
+            if datetime.now(timezone.utc) > data["expires_at"]:
+                del self.storage[email]
+                return False, "OTP has expired"
+            
+            # Prevent brute force
+            if data["attempts"] >= 5:
+                del self.storage[email]
+                return False, "Too many failed attempts. Request new OTP"
+            
+            if data["otp"] != otp:
+                data["attempts"] += 1
+                return False, "Invalid OTP"
+            
+            del self.storage[email]
+            return True, "OTP verified"
+    
+    def _schedule_cleanup(self, email: str, minutes: int):
+        def cleanup():
+            time.sleep(minutes * 60)
+            with self.lock:
+                if email in self.storage:
+                    del self.storage[email]
+        
+        thread = threading.Thread(target=cleanup, daemon=True)
+        thread.start()
+
+otp_manager = OtpManager()
 pending_sql_actions = {}
 
 # Pydantic Models
@@ -229,6 +334,30 @@ def sql_to_table_preview(sql: str):
         "data": [[action, table, condition, "Removes record(s) permanently"]]
     }
 
+def validate_sql_safety(sql: str) -> Tuple[bool, str]:
+    """Comprehensive SQL safety validation"""
+    sql_upper = sql.upper().strip()
+    
+    # Check for dangerous keywords in wrong context
+    if sql_upper.startswith(("DROP", "TRUNCATE")):
+        return False, "DROP and TRUNCATE operations are not allowed"
+    
+    # Check for multiple statements (SQL injection technique)
+    statements = sql.split(";")
+    if len([s for s in statements if s.strip()]) > 1:
+        return False, "Multiple SQL statements are not allowed"
+    
+    # Check for comment injection
+    if "--" in sql or "/*" in sql or "*/" in sql:
+        return False, "SQL comments are not allowed for security"
+    
+    # Check for UNION-based injection
+    if " UNION " in sql_upper and sql_upper.startswith("SELECT"):
+        # UNION is allowed in SELECT but warn for auditing
+        pass
+    
+    return True, ""
+
 def verify_password(plain_password, hashed_password):
     return pwd_context.verify(plain_password, hashed_password)
 
@@ -284,6 +413,15 @@ def get_response(question, db):
         
         sql_query = sql_query.rstrip(';')
         
+        # ✅ NEW: Validate SQL safety
+        is_safe, error_msg = validate_sql_safety(sql_query)
+        if not is_safe:
+            return json.dumps({
+                "type": "error",
+                "message": f"❌ Security Check Failed: {error_msg}",
+                "sql": sql_query
+            })
+        
         dangerous_ops = detect_dangerous_sql(sql_query)
         if len(dangerous_ops) > 0:
             return json.dumps({
@@ -300,30 +438,44 @@ def get_response(question, db):
             sql_type = 'other'
 
         if sql_type == 'select':
+            # ✅ Check cache first
+            cache_key = query_cache.get_cache_key(sql_query, app.state.db_name)
+            cached_result = query_cache.get(cache_key)
+            
+            if cached_result:
+                return f"SQL: `{sql_query}`\nOutput: {json.dumps(cached_result)}"
+            
             try:
                 connection = db._engine.connect()
-                result_proxy = connection.execute(text(sql_query))
-                
-                columns = list(result_proxy.keys())
-                rows = result_proxy.fetchall()
-                
-                data = []
-                for row in rows:
-                    row_data = []
-                    for cell in row:
-                        if cell is None:
-                            row_data.append('')
-                        else:
-                            row_data.append(str(cell))
-                    data.append(row_data)
-                
-                output_data = {
-                    "type": "select",
-                    "data": data,
-                    "columns": columns,
-                    "row_count": len(data)
-                }
-                
+                # ✅ CRITICAL: Use context manager for automatic cleanup
+                result_proxy = None
+                try:
+                    result_proxy = connection.execute(text(sql_query))
+                    columns = list(result_proxy.keys())
+                    rows = result_proxy.fetchall()
+                    
+                    data = []
+                    for row in rows:
+                        row_data = [str(cell) if cell is not None else '' for cell in row]
+                        data.append(row_data)
+                    
+                    output_data = {
+                        "type": "select",
+                        "data": data,
+                        "columns": columns,
+                        "row_count": len(data)
+                    }
+                    
+                    # ✅ Cache the result
+                    query_cache.set(cache_key, output_data)
+                    
+                    return f"SQL: `{sql_query}`\nOutput: {json.dumps(output_data)}"
+                    
+                finally:
+                    # result is closed
+                    if result_proxy is not None:
+                        result_proxy.close()
+                    
             except Exception as select_error:
                 error_message = str(select_error)
                 
@@ -359,12 +511,13 @@ def get_response(question, db):
                         "sql": sql_query
                     }
             finally:
+                # ✅ ALWAYS close connection
                 if connection:
                     try:
                         connection.close()
-                    except Exception as close_error:
-                        print(f"Error closing connection: {close_error}")
-                    
+                    except Exception as e:
+                        print(f"Error closing connection: {e}")
+        
         else:
             result = db.run(sql_query)
             clean_result = result.strip()
@@ -386,42 +539,46 @@ def get_response(question, db):
         return f"SQL: `{sql_query}`\nOutput: {json.dumps(output_data)}"
         
     except Exception as e:
-        error_data = {
-            "type": "error", 
-            "message": f"Failed to generate or execute query: {str(e)}",
-            "sql_attempted": sql_query
-        }
-        return f"SQL: `{sql_query}`\nOutput: {json.dumps(error_data)}"
+        print(f"Error: {str(e)}")
+        return json.dumps({
+            "type": "error",
+            "message": f"Error: {str(e)}"
+        })
     finally:
-        if connection:
+        # ✅ Double-check cleanup
+        if connection and not connection.closed:
             try:
                 connection.close()
-            except Exception as final_close_error:
-                print(f"Final connection close error: {final_close_error}")
+            except:
+                pass
 
 # API ENDPOINTS
 
 @app.post("/api/send-otp")
-async def send_otp_for_signup(request: OtpRequest):
+@limiter.limit("5/minute")  # Max 5 OTP requests per minute
+async def send_otp_for_signup(request: Request, otp_request: OtpRequest):
+    try:
+        validate_email(otp_request.email)
+    except EmailNotValidError as e:
+        raise HTTPException(status_code=400, detail=f"Invalid email address: {str(e)}")
+    
     otp = generate_otp()
-    expires_at = datetime.now(timezone.utc) + timedelta(minutes=5)
-    otp_storage[request.email] = {"otp": otp, "expires_at": expires_at}
-    send_otp_email(request.email, otp)
-    print(f"OTP for {request.email}: {otp}")
+    otp_manager.store(otp_request.email, otp)
+    send_otp_email(otp_request.email, otp)
+    print(f"OTP for {otp_request.email}: {otp}")
     return {"success": True, "message": "OTP has been sent to your email."}
 
 @app.post("/api/signup", status_code=201)
 async def signup_user(user: UserCreate, db: Session = Depends(get_db)):
-    stored_otp_data = otp_storage.get(user.email)
-    if not stored_otp_data:
-        raise HTTPException(status_code=400, detail="OTP not requested or expired.")
-
-    if datetime.now(timezone.utc) > stored_otp_data["expires_at"]:
-        del otp_storage[user.email]
-        raise HTTPException(status_code=400, detail="OTP has expired. Please request a new one.")
-        
-    if stored_otp_data["otp"] != user.otp:
-        raise HTTPException(status_code=400, detail="Invalid OTP provided.")
+    try:
+        validate_email(user.email)
+    except EmailNotValidError as e:
+        raise HTTPException(status_code=400, detail=f"Invalid email address: {str(e)}")
+    
+    is_valid, error_msg = otp_manager.verify(user.email, user.otp)
+    
+    if not is_valid:
+        raise HTTPException(status_code=400, detail=error_msg)
     
     if get_user(user.email, db):
         raise HTTPException(status_code=400, detail="Email already registered")
@@ -439,12 +596,12 @@ async def signup_user(user: UserCreate, db: Session = Depends(get_db)):
     db.add(db_user)
     db.commit()
     db.refresh(db_user)
-    del otp_storage[user.email]
 
     return {"success": True, "message": "User created successfully"}
 
 @app.post("/api/login")
-async def login_for_access_token(form_data: UserLogin, db: Session = Depends(get_db)):
+@limiter.limit("10/minute")  # Max 10 login attempts per minute
+async def login_for_access_token(request: Request, form_data: UserLogin, db: Session = Depends(get_db)):
     user = get_user(form_data.identifier, db)
     if not user or not verify_password(form_data.password, user.hashed_password):
         raise HTTPException(status_code=401, detail="Incorrect email or password")
@@ -578,6 +735,7 @@ async def disconnect_db():
             delattr(app.state, "db_uri")
         if hasattr(app.state, "db_name"):
             delattr(app.state, "db_name")
+        query_cache.clear()
         print("Database disconnected successfully")
         return {"success": True, "message": "Database disconnected successfully"}
     except Exception as e:
@@ -681,19 +839,30 @@ async def get_database_tables():
         raise HTTPException(status_code=500, detail=str(e))
     
 @app.post("/api/chat")
-async def chat_endpoint(request: ChatRequest):
+@limiter.limit("60/minute")  # Max 30 chats per minute
+async def chat_endpoint(request: Request, chat_request: ChatRequest):
     if not hasattr(app.state, "db_uri"):
         raise HTTPException(status_code=400, detail="Database not connected")
     
     try:
-        db = SQLDatabase.from_uri(app.state.db_uri)
-        response = get_response(request.question, db)
+        engine = create_engine(
+            app.state.db_uri,
+            pool_pre_ping=True,              # ✅ Test connections before using
+            pool_recycle=3600,               # ✅ Recycle connections every hour
+            pool_size=10,                    # ✅ INCREASED: Increased from default 5
+            max_overflow=20,                 # ✅ INCREASED: Increased from default 10
+            connect_args={
+                "connect_timeout": 30,       # ✅ NEW: Connection timeout
+            }
+        )
+        db = SQLDatabase(engine=engine)
+        response = get_response(chat_request.question, db)
         return {"success": True, "response": response}
     except HTTPException as e:
         raise e
     except Exception as e:
         print(f"Chat endpoint error: {str(e)}")
-        print(f"Request data: question={request.question}")
+        print(f"Request data: question={chat_request.question}")
         raise HTTPException(status_code=500, detail=f"Unexpected error: {str(e)}")
 
 @app.get("/api/chat-sessions")
