@@ -31,6 +31,12 @@ from typing import List, Optional
 import csv
 import io
 import hashlib
+from pydantic import BaseModel
+from typing import List, Optional, Dict, Any
+from datetime import datetime
+from sqlalchemy import Column, Integer, String, Text, DateTime
+from datetime import datetime
+
 from extended_models import (
     FavoriteQuery,
     UserSettings,
@@ -92,7 +98,19 @@ class ChatSession(Base):
     user_id = Column(Integer, ForeignKey('users.id'), nullable=False)
     title = Column(String, nullable=False)
     messages = Column(Text, nullable=False)
-
+    
+class UserDashboard(Base):
+    __tablename__ = "user_dashboards"
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, nullable=False)
+    dashboard_id = Column(String(100), unique=True)
+    name = Column(String(200), nullable=False)
+    description = Column(Text)
+    charts_data = Column(Text, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow)
+    
+    
 Base.metadata.create_all(engine)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
@@ -265,7 +283,49 @@ class ExportRequest(BaseModel):
     data: List[List]
     columns: List[str]
     format: str
+class ChartConfig(BaseModel):
+    xKey: Optional[str] = "name"
+    yKey: Optional[str] = "value"
+    dataKey: Optional[str] = "value"
+    nameKey: Optional[str] = "name"
+    colors: Optional[List[str]] = None
 
+class ChartData(BaseModel):
+    id: str
+    title: str
+    type: str  # 'line', 'bar', 'pie', 'area', 'scatter'
+    size: Optional[str] = "medium"  # 'small', 'medium', 'large', 'full'
+    data: List[Dict[str, Any]]
+    config: ChartConfig
+    notes: Optional[str] = None
+    createdAt: str
+    updatedAt: Optional[str] = None
+
+class Dashboard(BaseModel):
+    id: str
+    name: str
+    description: Optional[str] = None
+    charts: List[ChartData]
+    createdAt: str
+    updatedAt: str
+
+class DashboardCreate(BaseModel):
+    user_id: int
+    dashboard_id: str
+    name: str
+    description: Optional[str] = ""
+    charts: List[Dict[str, Any]]
+
+class DashboardUpdate(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    charts: Optional[List[Dict[str, Any]]] = None
+
+class DashboardMigrate(BaseModel):
+    user_id: int
+    dashboards_data: List[Dict[str, Any]]
+
+# Helper Functions
 def get_db():
     db = SessionLocal()
     try:
@@ -1111,7 +1171,256 @@ async def get_tips_by_category(category: str, db: Session = Depends(get_db)):
         "category": tip.category
     } for tip in tips]
 
+#dashboard endpoint 
+@app.get("/api/custom-dashboards/{user_id}")
+async def get_user_dashboards(
+    user_id: int,
+    db: Session = Depends(get_db)
+):
+    """Get all dashboards for a specific user"""
+    try:
+        dashboards = db.query(UserDashboard).filter(
+            UserDashboard.user_id == user_id
+        ).order_by(UserDashboard.created_at.desc()).all()
+        
+        result = []
+        for dashboard in dashboards:
+            result.append({
+                "id": dashboard.id,
+                "dashboard_id": dashboard.dashboard_id,
+                "user_id": dashboard.user_id,
+                "name": dashboard.name,
+                "description": dashboard.description,
+                "charts": json.loads(cast(str, dashboard.charts_data)),
+                "created_at": dashboard.created_at.isoformat(),
+                "updated_at": dashboard.updated_at.isoformat()
+            })
+        
+        print(f"✅ Fetched {len(result)} dashboards for user {user_id}")
+        return result
+        
+    except Exception as e:
+        print(f"❌ Error fetching dashboards: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
+
+@app.post("/api/custom-dashboards")
+async def create_dashboard(
+    dashboard: DashboardCreate,
+    db: Session = Depends(get_db)
+):
+    """Create a new dashboard"""
+    try:
+        # Check if dashboard_id already exists
+        existing = db.query(UserDashboard).filter(
+            UserDashboard.dashboard_id == dashboard.dashboard_id
+        ).first()
+        
+        if existing:
+            raise HTTPException(status_code=400, detail="Dashboard ID already exists")
+        
+        # Create new dashboard
+        new_dashboard = UserDashboard(
+            user_id=dashboard.user_id,
+            dashboard_id=dashboard.dashboard_id,
+            name=dashboard.name,
+            description=dashboard.description or "",
+            charts_data=json.dumps(dashboard.charts),
+            created_at=datetime.utcnow(),
+            updated_at=datetime.utcnow()
+        )
+        
+        db.add(new_dashboard)
+        db.commit()
+        db.refresh(new_dashboard)
+        
+        print(f"✅ Created dashboard: {new_dashboard.name} for user {dashboard.user_id}")
+        
+        return {
+            "id": new_dashboard.id,
+            "dashboard_id": new_dashboard.dashboard_id,
+            "user_id": new_dashboard.user_id,
+            "name": new_dashboard.name,
+            "description": new_dashboard.description,
+            "charts": json.loads(cast(str, new_dashboard.charts_data)),
+            "created_at": new_dashboard.created_at.isoformat(),
+            "updated_at": new_dashboard.updated_at.isoformat()
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        print(f"❌ Error creating dashboard: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.put("/api/custom-dashboards/{dashboard_id}")
+async def update_dashboard(
+    dashboard_id: str,
+    user_id: int,
+    updates: DashboardUpdate,
+    db: Session = Depends(get_db)
+):
+    """Update an existing dashboard"""
+    try:
+        dashboard = db.query(UserDashboard).filter(
+            UserDashboard.dashboard_id == dashboard_id,
+            UserDashboard.user_id == user_id
+        ).first()
+        
+        if not dashboard:
+            raise HTTPException(status_code=404, detail="Dashboard not found")
+        
+        # Update fields using setattr to avoid type checker issues
+        if updates.name is not None:
+            setattr(dashboard, 'name', updates.name)
+        if updates.description is not None:
+            setattr(dashboard, 'description', updates.description)
+        if updates.charts is not None:
+            setattr(dashboard, 'charts_data', json.dumps(updates.charts))
+        
+        setattr(dashboard, 'updated_at', datetime.utcnow())
+        
+        db.commit()
+        db.refresh(dashboard)
+        
+        print(f"✅ Updated dashboard: {dashboard.name}")
+        
+        return {
+            "id": dashboard.id,
+            "dashboard_id": dashboard.dashboard_id,
+            "user_id": dashboard.user_id,
+            "name": dashboard.name,
+            "description": dashboard.description,
+            "charts": json.loads(cast(str, dashboard.charts_data)),
+            "created_at": dashboard.created_at.isoformat(),
+            "updated_at": dashboard.updated_at.isoformat()
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        print(f"❌ Error updating dashboard: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/api/custom-dashboards/{dashboard_id}")
+async def delete_dashboard(
+    dashboard_id: str,
+    user_id: int,
+    db: Session = Depends(get_db)
+):
+    """Delete a dashboard"""
+    try:
+        dashboard = db.query(UserDashboard).filter(
+            UserDashboard.dashboard_id == dashboard_id,
+            UserDashboard.user_id == user_id
+        ).first()
+        
+        if not dashboard:
+            raise HTTPException(status_code=404, detail="Dashboard not found")
+        
+        db.delete(dashboard)
+        db.commit()
+        
+        print(f"✅ Deleted dashboard: {dashboard.name}")
+        return {"success": True, "message": "Dashboard deleted"}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        print(f"❌ Error deleting dashboard: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/custom-dashboards/{user_id}/{dashboard_id}")
+async def get_single_dashboard(
+    user_id: int,
+    dashboard_id: str,
+    db: Session = Depends(get_db)
+):
+    """Get a specific dashboard by ID"""
+    try:
+        dashboard = db.query(UserDashboard).filter(
+            UserDashboard.dashboard_id == dashboard_id,
+            UserDashboard.user_id == user_id
+        ).first()
+        
+        if not dashboard:
+            raise HTTPException(status_code=404, detail="Dashboard not found")
+        
+        return {
+            "id": dashboard.id,
+            "dashboard_id": dashboard.dashboard_id,
+            "user_id": dashboard.user_id,
+            "name": dashboard.name,
+            "description": dashboard.description,
+            "charts": json.loads(cast(str, dashboard.charts_data)),
+            "created_at": dashboard.created_at.isoformat(),
+            "updated_at": dashboard.updated_at.isoformat()
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"❌ Error fetching dashboard: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/custom-dashboards/migrate-from-localstorage")
+async def migrate_from_localstorage(
+    migration: DashboardMigrate,
+    db: Session = Depends(get_db)
+):
+    """Migrate dashboards from localStorage to database"""
+    try:
+        migrated_count = 0
+        skipped_count = 0
+        
+        for dashboard_data in migration.dashboards_data:
+            # Check if already exists
+            existing = db.query(UserDashboard).filter(
+                UserDashboard.dashboard_id == dashboard_data.get('id'),
+                UserDashboard.user_id == migration.user_id
+            ).first()
+            
+            if existing:
+                skipped_count += 1
+                continue
+            
+            # Create new dashboard
+            new_dashboard = UserDashboard(
+                user_id=migration.user_id,
+                dashboard_id=dashboard_data.get('id'),
+                name=dashboard_data.get('name', 'Untitled Dashboard'),
+                description=dashboard_data.get('description', ''),
+                charts_data=json.dumps(dashboard_data.get('charts', [])),
+                created_at=datetime.fromisoformat(dashboard_data.get('createdAt', datetime.utcnow().isoformat()).replace('Z', '+00:00')),
+                updated_at=datetime.fromisoformat(dashboard_data.get('updatedAt', datetime.utcnow().isoformat()).replace('Z', '+00:00'))
+            )
+            
+            db.add(new_dashboard)
+            migrated_count += 1
+        
+        db.commit()
+        
+        message = f"Migrated {migrated_count} dashboards, skipped {skipped_count} existing"
+        print(f"✅ {message}")
+        
+        return {
+            "success": True,
+            "message": message,
+            "migrated": migrated_count,
+            "skipped": skipped_count
+        }
+        
+    except Exception as e:
+        db.rollback()
+        print(f"❌ Migration error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 # -------- USER SETTINGS --------
 
 @app.get("/api/settings/{user_id}")
@@ -1299,6 +1608,7 @@ async def get_query_stats(user_id: int, db: Session = Depends(get_db)):
         "successful_queries": successful_queries,
         "success_rate": (successful_queries / total_queries * 100) if total_queries > 0 else 0
     }
+    
 
 @app.on_event("shutdown")
 async def shutdown_event():

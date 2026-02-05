@@ -36,7 +36,7 @@ export const DatabaseProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     
     try {
       const token = localStorage.getItem('auth_token');
-      await fetch('https://query-genie-h0cy.onrender.com/api/disconnect', {
+      await fetch('http://https://query-genie-h0cy.onrender.com/api/disconnect', {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json',

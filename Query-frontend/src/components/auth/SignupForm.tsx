@@ -93,7 +93,7 @@ const SignupForm = ({ onSwitchToLogin }: SignupFormProps) => {
 
     setIsSendingOtp(true);
     try {
-      const apiUrl = `https://query-genie-h0cy.onrender.com/api/send-otp` ;
+      const apiUrl = `http://https://query-genie-h0cy.onrender.com/api/send-otp` ;
       const response = await axios.post(apiUrl, { email: formData.email });
       if (response.data.success) {
         setOtpSent(true);

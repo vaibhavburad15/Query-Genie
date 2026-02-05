@@ -14,6 +14,7 @@ import NotFound from "./pages/NotFound";
 const AuthPage = lazy(() => import("./pages/AuthPage"));
 const DashboardPage = lazy(() => import("./pages/DashboardPage"));
 const Index = lazy(() => import("./pages/Index"));
+const CustomDashboard = lazy(() => import("./pages/Customdashboard"));
 
 const queryClient = new QueryClient();
 
@@ -58,6 +59,15 @@ const AppRoutes = () => (
       </ProtectedRoute>
     } />
 
+    {/* ✅ NEW: Custom Dashboard Route */}
+    <Route path="/custom-dashboard" element={
+      <ProtectedRoute>
+        <Suspense fallback={<LoadingSpinner />}>
+          <CustomDashboard />
+        </Suspense>
+      </ProtectedRoute>
+    } />
+
     {/* Public Routes - Redirect if authenticated */}
     <Route path="/auth" element={
       <PublicRoute>
@@ -87,7 +97,9 @@ const App = () => (
           <TooltipProvider>
             <Toaster />
             <Sonner />
-            <AppRoutes />
+            <ErrorBoundary>
+              <AppRoutes />
+            </ErrorBoundary>
           </TooltipProvider>
         </AuthProvider>
       </ThemeProvider>

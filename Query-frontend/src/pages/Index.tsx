@@ -1,6 +1,6 @@
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
-import { ArrowRight, Database, Lock, MessageSquare, Zap, CheckCircle2, BarChart3, Shield, Sparkles, Code2, FileText, Download, Clock, Users, TrendingUp, GitBranch, Star, Play } from 'lucide-react';
+import { ArrowRight, Database, Lock, MessageSquare, Zap, CheckCircle2, BarChart3, Shield, Sparkles, Code2, FileText, Download, Clock, Users, TrendingUp, GitBranch, Star, Play, LayoutDashboard } from 'lucide-react';
 import logo from '@/assets/query-genie-logo.png';
 
 const Index = () => {
@@ -838,6 +838,22 @@ const Index = () => {
                   <div className="flex items-center gap-2 text-sm text-pink-600 font-semibold">
 
                   
+                  </div>
+                </div>
+              </div>
+              <div className="group relative bg-white rounded-3xl p-8 border border-gray-200 hover:border-indigo-300 hover:shadow-2xl transition-all duration-500 overflow-hidden">
+                <div className="absolute inset-0 bg-gradient-to-br from-indigo-50 to-purple-50 opacity-0 group-hover:opacity-100 transition-opacity duration-500"></div>
+                <div className="relative">
+                  <div className="w-14 h-14 bg-gradient-to-br from-indigo-100 to-purple-100 rounded-2xl flex items-center justify-center mb-6 group-hover:scale-110 transition-transform duration-500">
+                    <LayoutDashboard className="w-7 h-7 text-indigo-600" strokeWidth={2.5} />
+                  </div>
+                  <h3 className="text-2xl font-bold text-gray-900 mb-4">Dashboard</h3>
+                  <p className="text-gray-600 leading-relaxed mb-4">
+                    View and manage your database insights in one place.
+                  </p>
+                  <div className="flex items-center gap-2 text-sm text-indigo-600 font-semibold">
+                    
+                    
                   </div>
                 </div>
               </div>

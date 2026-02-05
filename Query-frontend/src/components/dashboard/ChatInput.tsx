@@ -6,6 +6,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Plus, Send, Loader2 } from 'lucide-react';
 import { ChatRequestPayload } from '@/services/api';
 import { useSendChatMessage } from '@/hooks/useQueryCache';
+import { useQueryTemplates } from '@/hooks/useQueryTemplates';
 
 // Define the shape of a chat message
 export interface ChatMessage {
@@ -37,6 +38,7 @@ const ChatInput = memo(({
 }: ChatInputProps) => {
   const [message, setMessage] = useState('');
   const sendChatMutation = useSendChatMessage();
+  const { templates } = useQueryTemplates();
 
   // ✅ Memoized callbacks
   const handleSetChatHistory = useCallback(setChatHistory, [setChatHistory]);
@@ -120,6 +122,23 @@ const ChatInput = memo(({
 
   return (
     <div className="bg-transparent p-4">
+      {isConnected && (
+        <div className="max-w-4xl mx-auto mb-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+            {templates.slice(0, 4).map((template) => (
+              <button
+                key={template.question}
+                onClick={() => setMessage(template.question)}
+                className="p-3 text-left border rounded hover:bg-muted"
+              >
+                <span>{template.icon}</span>
+                <p className="font-medium">{template.title}</p>
+                <p className="text-sm text-muted-foreground">{template.question}</p>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
       <form onSubmit={(e) => { e.preventDefault(); handleSubmit(); }} className="max-w-4xl mx-auto">
         <div className="relative">
           <Textarea
