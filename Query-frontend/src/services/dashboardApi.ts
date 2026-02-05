@@ -38,7 +38,7 @@ export interface Dashboard {
   updatedAt?: string;
 }
 
-const API_BASE_URL = 'https://query-genie-h0cy.onrender.com/api/custom-dashboards';
+const API_BASE_URL = 'localhost:8000/api/custom-dashboards';
 
 // ✅ GET: Fetch all dashboards for a user
 export const fetchDashboards = async (userId: number): Promise<Dashboard[]> => {
