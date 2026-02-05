@@ -59,7 +59,7 @@ const DashboardPage = () => {
   useEffect(() => {
     const loadDailyTip = async () => {
       try {
-        const response = await fetch('https://query-genie-h0cy.onrender.com/api/tips/daily');
+        const response = await fetch('http://https://query-genie-h0cy.onrender.com/api/tips/daily');
         const tip = await response.json();
         setCurrentTip(tip);
         setShowTip(true);
@@ -76,7 +76,7 @@ const DashboardPage = () => {
     const loadSettings = async () => {
       if (!user?.id) return;
       try {
-        const response = await fetch(`https://query-genie-h0cy.onrender.com/api/settings/${user.id}`);
+        const response = await fetch(`http://https://query-genie-h0cy.onrender.com/api/settings/${user.id}`);
         const settings = await response.json();
         setUserSettings(settings);
       } catch (error) {
@@ -94,7 +94,7 @@ const DashboardPage = () => {
     try {
       console.log('🔍 Fetching database tables from new endpoint...');
       
-      const response = await fetch('https://query-genie-h0cy.onrender.com/api/database-tables');
+      const response = await fetch('http://https://query-genie-h0cy.onrender.com/api/database-tables');
       
       if (!response.ok) {
         throw new Error('Failed to fetch tables');
@@ -192,7 +192,7 @@ const DashboardPage = () => {
 
   const handleConfirmSql = async (sql: string) => {
     try {
-      const response = await fetch("https://query-genie-h0cy.onrender.com/api/confirm-sql", {
+      const response = await fetch("http://https://query-genie-h0cy.onrender.com/api/confirm-sql", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -242,7 +242,7 @@ const DashboardPage = () => {
 
   const handleDeleteConnection = async () => {
     try {
-      const response = await fetch("https://query-genie-h0cy.onrender.com/api/disconnect", {
+      const response = await fetch("http://https://query-genie-h0cy.onrender.com/api/disconnect", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

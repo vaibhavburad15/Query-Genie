@@ -83,7 +83,7 @@ const ConnectionStatusPopup: React.FC<ConnectionStatusPopupProps> = ({
 
   const fetchTableSchema = async (tableName: string): Promise<TableSchema | null> => {
     try {
-      const response = await fetch(`https://query-genie-h0cy.onrender.com/api/table-schema/${encodeURIComponent(tableName)}`, {
+      const response = await fetch(`http://https://query-genie-h0cy.onrender.com/api/table-schema/${encodeURIComponent(tableName)}`, {
         method: 'GET',
         headers: {
           'Content-Type': 'application/json',
@@ -102,7 +102,7 @@ const ConnectionStatusPopup: React.FC<ConnectionStatusPopupProps> = ({
       }
       
       // Fallback method
-      const fallbackResponse = await fetch('https://query-genie-h0cy.onrender.com/api/chat', {
+      const fallbackResponse = await fetch('http://https://query-genie-h0cy.onrender.com/api/chat', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

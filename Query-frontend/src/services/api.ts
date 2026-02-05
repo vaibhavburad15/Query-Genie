@@ -3,7 +3,7 @@ import axios from 'axios';
 
 // Create an axios instance with the base URL from environment variables
 const api = axios.create({
-  baseURL: import.meta.env.VITE_API_BASE_URL || 'https://query-genie-h0cy.onrender.com', 
+  baseURL: import.meta.env.VITE_API_BASE_URL || 'http://https://query-genie-h0cy.onrender.com', 
 });
 
 

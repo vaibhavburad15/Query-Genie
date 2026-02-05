@@ -38,7 +38,7 @@ const FavoritesPanel: React.FC<FavoritesPanelProps> = ({
   const loadFavorites = async () => {
     setIsLoading(true);
     try {
-      const response = await fetch(`https://query-genie-h0cy.onrender.com/api/favorites/${userId}`);
+      const response = await fetch(`http://https://query-genie-h0cy.onrender.com/api/favorites/${userId}`);
       const data = await response.json();
       setFavorites(data);
     } catch (error) {
@@ -54,7 +54,7 @@ const FavoritesPanel: React.FC<FavoritesPanelProps> = ({
     if (!window.confirm('Remove this query from favorites?')) return;
 
     try {
-      await fetch(`https://query-genie-h0cy.onrender.com/api/favorites/${favoriteId}?user_id=${userId}`, {
+      await fetch(`http://https://query-genie-h0cy.onrender.com/api/favorites/${favoriteId}?user_id=${userId}`, {
         method: 'DELETE',
       });
       setFavorites(favorites.filter(f => f.id !== favoriteId));

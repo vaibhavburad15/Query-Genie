@@ -1,16 +1,18 @@
-import { Menu, Database, Plus, MessageSquare, MoreVertical, RefreshCw, LogOut, Trash2, Settings, Star, Lightbulb } from 'lucide-react';
+import { Menu, Database, Plus, MessageSquare, MoreVertical, RefreshCw, LogOut, Trash2, Settings, BarChart3 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { 
-  DropdownMenu, 
-  DropdownMenuContent, 
-  DropdownMenuItem, 
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
   DropdownMenuTrigger,
-  DropdownMenuSeparator 
+  DropdownMenuSeparator
 } from '@/components/ui/dropdown-menu';
 import { memo, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import FavoritesPanel from './FavoritesPanel';
+import { ThemeToggle } from '@/components/ui/theme-toggle';
 
 interface ChatSession {
   id: number;
@@ -52,7 +54,7 @@ const Sidebar = memo(({
   favoritesRefreshTrigger
 }: SidebarProps) => {
 
-  
+  const navigate = useNavigate();
 
   const handleSelectFavorite = (question: string) => {
     console.log('Selected favorite:', question);
@@ -175,7 +177,6 @@ const Sidebar = memo(({
               </div>
 
               
-              
 
               {/* Favorites Panel */}
               <FavoritesPanel
@@ -183,6 +184,8 @@ const Sidebar = memo(({
                 onSelectFavorite={handleSelectFavorite}
                 refreshTrigger={favoritesRefreshTrigger}
               />
+
+
 
               {/* Chat History */}
               <div className="flex items-center justify-between p-3 border-b border-border">
@@ -195,14 +198,13 @@ const Sidebar = memo(({
                     <div className="text-center py-8 px-4">
                       <MessageSquare size={24} className="mx-auto text-muted-foreground mb-2" />
                       <p className="text-xs text-muted-foreground">No chat history yet</p>
-                      <p className="text-xs text-muted-foreground mt-1">Start a new chat to begin</p>
                     </div>
                   ) : (
                     chatSessions.map((chat) => (
                       <div
                         key={chat.id}
-                        className={`group relative rounded-lg transition-all duration-200 hover:bg-muted px-2 py-2 ${
-                          currentChatId === chat.id ? 'bg-brand-50 border-l-2 border-brand-500' : ''
+                        className={`group p-2 rounded-md hover:bg-muted transition-colors cursor-pointer ${
+                          currentChatId === chat.id ? 'bg-brand-50 dark:bg-brand-900/20' : ''
                         }`}
                       >
                         <button
@@ -263,6 +265,53 @@ const Sidebar = memo(({
                   )}
                 </div>
               </ScrollArea>
+
+              {/* ✅ UPDATED: Custom Dashboard Button */}
+              <div className="p-3 border-t border-border">
+                <TooltipProvider>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => navigate('/custom-dashboard')}
+                        className="w-full h-8 text-xs hover:bg-muted"
+                      >
+                        <BarChart3 size={14} className="mr-2" />
+                        Custom Dashboard
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      <p>Create and manage custom dashboards</p>
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+              </div>
+
+              {/* Footer with Settings and Theme Toggle */}
+              <div className="p-3 border-t border-border">
+                <div className="flex items-center justify-between">
+                  <TooltipProvider>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={onOpenSettings}
+                          className="h-8 w-8 p-0"
+                        >
+                          <Settings size={16} />
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        <p>Settings</p>
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+
+                  <ThemeToggle />
+                </div>
+              </div>
             </>
           )}
 
@@ -283,6 +332,17 @@ const Sidebar = memo(({
                   </TooltipTrigger>
                   <TooltipContent side="right">
                     <p>Settings</p>
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <ThemeToggle />
+                  </TooltipTrigger>
+                  <TooltipContent side="right">
+                    <p>Toggle Theme</p>
                   </TooltipContent>
                 </Tooltip>
               </TooltipProvider>
@@ -323,6 +383,25 @@ const Sidebar = memo(({
                   </TooltipTrigger>
                   <TooltipContent side="right">
                     <p>{isConnected ? 'New Chat' : 'Connect database first'}</p>
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+
+              {/* ✅ Custom Dashboard Icon in Collapsed State */}
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => navigate('/custom-dashboard')}
+                      className="w-10 h-10 p-0"
+                    >
+                      <BarChart3 size={18} />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent side="right">
+                    <p>Custom Dashboard</p>
                   </TooltipContent>
                 </Tooltip>
               </TooltipProvider>

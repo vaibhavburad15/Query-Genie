@@ -8,7 +8,7 @@ import ChartVisualization from './ChartVisualization';
 import ConnectionStatusPopup from './ConnectionStatusPopup';
 import UserProfile from './UserProfile';
 import { useToast } from '@/hooks/use-toast';
-
+import { ChartMessage } from '@/components/chat/Chartmessage';
 // ChatWindowSkeleton component for loading states
 export const ChatWindowSkeleton = () => (
   <div className="space-y-4 p-4">
@@ -17,6 +17,41 @@ export const ChatWindowSkeleton = () => (
     <Skeleton className="h-32 w-full" />
   </div>
 );
+
+// Helper functions for chart processing
+function convertToChartFormat(data: string[][], columns: string[]): any[] {
+  if (!data || data.length === 0) return [];
+  return data.map(row => {
+    const obj: any = {};
+    columns.forEach((col, index) => {
+      obj[col] = row[index] || '';
+    });
+    return obj;
+  });
+}
+
+function inferChartType(data: any[], columns: string[]): 'table' | 'bar' | 'line' | 'pie' {
+  if (!data || data.length === 0) return 'table';
+
+  // Check if we have numeric columns for charts
+  const numericColumns = columns.filter(col => {
+    return data.some(row => {
+      const value = row[col];
+      return !isNaN(Number(value)) && value !== '';
+    });
+  });
+
+  if (numericColumns.length >= 2) {
+    // If we have multiple numeric columns, prefer bar chart
+    return 'bar';
+  } else if (numericColumns.length === 1) {
+    // Single numeric column - could be bar or line
+    return data.length > 10 ? 'line' : 'bar';
+  }
+
+  // Default to table if no numeric data
+  return 'table';
+}
 
 // Helper function to parse SQL output string to structured data
 function parseSqlOutput(output: string): {
@@ -144,7 +179,7 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
             const sql = sqlMatch[1];
             try {
               const response = await fetch(
-                `https://query-genie-h0cy.onrender.com/api/favorites/${userId}/check?sql=${encodeURIComponent(sql)}`
+                `http://https://query-genie-h0cy.onrender.com/api/favorites/${userId}/check?sql=${encodeURIComponent(sql)}`
               );
               const data = await response.json();
               setFavoritedQueries(prev => ({ ...prev, [message.id]: data.is_favorite }));
@@ -168,7 +203,7 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
       // Remove from favorites
       try {
         const checkResponse = await fetch(
-          `https://query-genie-h0cy.onrender.com/api/favorites/${userId}/check?sql=${encodeURIComponent(sqlQuery)}`
+          `http://https://query-genie-h0cy.onrender.com/api/favorites/${userId}/check?sql=${encodeURIComponent(sqlQuery)}`
         );
         
         if (!checkResponse.ok) {
@@ -179,7 +214,7 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
 
         if (checkData.favorite_id) {
           const deleteResponse = await fetch(
-            `https://query-genie-h0cy.onrender.com/api/favorites/${checkData.favorite_id}?user_id=${userId}`, 
+            `http://https://query-genie-h0cy.onrender.com/api/favorites/${checkData.favorite_id}?user_id=${userId}`, 
             { method: 'DELETE' }
           );
           
@@ -217,7 +252,7 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
           description: '',
         };
         
-        const response = await fetch('https://query-genie-h0cy.onrender.com/api/favorites', {
+        const response = await fetch('http://https://query-genie-h0cy.onrender.com/api/favorites', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload),
@@ -257,7 +292,7 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
 
   const handleExport = async (data: string[][], columns: string[], format: 'csv' | 'json') => {
     try {
-      const response = await fetch('https://query-genie-h0cy.onrender.com/api/export', {
+      const response = await fetch('http://https://query-genie-h0cy.onrender.com/api/export', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ data, columns, format }),
@@ -482,7 +517,7 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
 
                       if (parsedOutput.type === 'select' && parsedOutput.data) {
                         let columns: string[] = [];
-                        
+
                         if (parsedOutput.columns && parsedOutput.columns.length > 0) {
                           columns = parsedOutput.columns;
                         } else if (parsedOutput.data.length > 0) {
@@ -490,8 +525,12 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
                         } else {
                           columns = ['Value'];
                         }
-                        
+
                         const rowCount = parsedOutput.rowCount || parsedOutput.data.length;
+
+                        // Prepare chart data
+                        const chartData = convertToChartFormat(parsedOutput.data, columns);
+                        const suggestedChartType = inferChartType(chartData, columns);
 
                         return (
                           <div key={message.id} className="space-y-4">
@@ -569,7 +608,13 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
                                   </div>
                                 </div>
                               </div>
-
+                              {chartData.length > 0 && (
+                               <ChartMessage
+                                data={chartData}
+                                 query={sqlMatch[1]}
+                                  chartType={suggestedChartType}
+                                   />
+                                    )}
                               {/* Conditionally render Table or Chart */}
                               <div className="p-6">
                                 {currentViewMode === 'table' ? (
@@ -702,7 +747,7 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(({
     </>
   );
 }, (prevProps, nextProps) => {
-  // ✅ Custom comparison - only re-render if critical props changed
+  // ✅ Custom comparison - only re-render if critical prop
   return (
     prevProps.messages === nextProps.messages &&
     prevProps.isConnected === nextProps.isConnected &&
