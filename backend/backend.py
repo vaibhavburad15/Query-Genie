@@ -427,12 +427,75 @@ def get_password_hash(password):
 def get_user(identifier: str, db):
     return db.query(User).filter(User.email == identifier).first()
 
-def get_sql_chain(db):
+# ✅ NEW: Format chat history for the LLM
+def format_chat_history(chat_history: list) -> str:
+    """
+    Format the last 5 chat interactions for context.
+    Only includes user questions and the schema of the results.
+    """
+    if not chat_history:
+        return "No previous conversation history."
+    
+    # Take only the last 5 interactions
+    recent_history = chat_history[-5:] if len(chat_history) > 5 else chat_history
+    
+    formatted = []
+    for idx, item in enumerate(recent_history, 1):
+        user_msg = item.get('user', '')
+        assistant_msg = item.get('assistant', '')
+        
+        # Extract SQL and schema from assistant message
+        sql_match = re.search(r'SQL: `([^`]+)`', assistant_msg)
+        output_match = re.search(r'Output: ({.*})', assistant_msg, re.DOTALL)
+        
+        sql_query = sql_match.group(1) if sql_match else "N/A"
+        
+        # Extract just the schema (columns and row count) from output
+        if output_match:
+            try:
+                output_data = json.loads(output_match.group(1))
+                if output_data.get('type') == 'select':
+                    schema_info = f"Columns: {', '.join(output_data.get('columns', []))}, Rows: {output_data.get('row_count', 0)}"
+                else:
+                    schema_info = output_data.get('message', 'Operation completed')
+            except:
+                schema_info = "Result schema unavailable"
+        else:
+            schema_info = "No output"
+        
+        formatted.append(f"""
+Previous Query #{idx}:
+User Asked: "{user_msg}"
+SQL Generated: {sql_query}
+Result Schema: {schema_info}
+""")
+    
+    return "\n".join(formatted)
+
+
+def get_sql_chain(db, chat_history: list = []):
+    """
+    Create SQL generation chain with chat history context.
+    The LLM learns from previous interactions.
+    """
+    
+    # Format chat history for context
+    history_context = format_chat_history(chat_history)
+    
     user_template = """Database Schema:
 {schema}
 
-User Question:
-{question}"""
+{history}
+
+Current User Question:
+{question}
+
+Instructions:
+- Use the database schema above to understand table structures
+- Review the previous conversation history to understand context and patterns
+- Learn from previous successful queries
+- If the current question is similar to a previous one, use a similar SQL pattern
+- Generate ONLY the SQL query, nothing else"""""
     
     prompt = ChatPromptTemplate.from_messages([
         ("system", SQL_SYSTEM_PROMPT),
@@ -450,15 +513,24 @@ User Question:
     def get_schema(_):
         return db.get_table_info()
     
+    def get_history(_):
+        return history_context
+    
     return (
-        RunnablePassthrough.assign(schema=get_schema)
+        RunnablePassthrough.assign(
+            schema=get_schema,
+            history=get_history
+        )
         | prompt
         | llm
         | StrOutputParser()
     )
 
-def get_response(question, db):
-    chain = get_sql_chain(db)
+def get_response(question: str, db, chat_history: list = []):
+    """
+    Generate and execute SQL with context from previous conversations.
+    """
+    chain = get_sql_chain(db, chat_history)
     connection = None
     sql_query = "N/A"
     
@@ -899,30 +971,41 @@ async def get_database_tables():
         raise HTTPException(status_code=500, detail=str(e))
     
 @app.post("/api/chat")
-@limiter.limit("60/minute")  # Max 30 chats per minute
+@limiter.limit("60/minute")
 async def chat_endpoint(request: Request, chat_request: ChatRequest):
+    """
+    Process chat with context from previous conversations.
+    The LLM learns from the last 5 interactions.
+    """
     if not hasattr(app.state, "db_uri"):
         raise HTTPException(status_code=400, detail="Database not connected")
     
     try:
         engine = create_engine(
             app.state.db_uri,
-            pool_pre_ping=True,              # ✅ Test connections before using
-            pool_recycle=3600,               # ✅ Recycle connections every hour
-            pool_size=10,                    # ✅ INCREASED: Increased from default 5
-            max_overflow=20,                 # ✅ INCREASED: Increased from default 10
+            pool_pre_ping=True,
+            pool_recycle=3600,
+            pool_size=10,
+            max_overflow=20,
             connect_args={
-                "connect_timeout": 30,       # ✅ NEW: Connection timeout
+                "connect_timeout": 30,
             }
         )
         db = SQLDatabase(engine=engine)
-        response = get_response(chat_request.question, db)
+        
+        # ✅ UPDATED: Pass chat history to get_response
+        response = get_response(
+            question=chat_request.question,
+            db=db,
+            chat_history=chat_request.chat_history
+        )
         return {"success": True, "response": response}
+    
     except HTTPException as e:
         raise e
     except Exception as e:
         print(f"Chat endpoint error: {str(e)}")
-        print(f"Request data: question={chat_request.question}")
+        print(f"Request data: question={chat_request.question}, history_length={len(chat_request.chat_history)}")
         raise HTTPException(status_code=500, detail=f"Unexpected error: {str(e)}")
 
 @app.get("/api/chat-sessions")

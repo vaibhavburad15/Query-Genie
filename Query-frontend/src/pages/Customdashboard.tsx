@@ -1,4 +1,4 @@
-// ✅ ENHANCED: Custom Dashboard with Advanced Features
+// ✅ ENHANCED: Custom Dashboard with Advanced Features - FIXED CHART RENDERING
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
@@ -183,22 +183,23 @@ const DATA_TEMPLATES = {
   ]
 };
 
+// ✅ FIXED: Dynamic chart sizes based on data length
 const CHART_SIZE_CONFIG = {
-  small: { height: 250, cols: 1 },
-  medium: { height: 350, cols: 1 },
-  large: { height: 450, cols: 2 },
-  full: { height: 500, cols: 12 }
+  small: { height: 300, cols: 1 },
+  medium: { height: 400, cols: 1 },
+  large: { height: 500, cols: 2 },
+  full: { height: 600, cols: 12 }
 };
 
 // ==================== UTILITY FUNCTIONS ====================
 const getStorageKey = (userId: number | undefined): string => {
-  const id = userId || 'guest';
-  return `custom_dashboards_v2_${id}`;
+  const userIdStr = userId || 'guest';
+  return `custom_dashboards_v2_${userIdStr}`;
 };
 
 const getActivityLogKey = (userId: number | undefined): string => {
-  const id = userId || 'guest';
-  return `dashboard_activity_${id}`;
+  const userIdStr = userId || 'guest';
+  return `dashboard_activity_${userIdStr}`;
 };
 
 const saveToLocalStorage = (key: string, data: any): boolean => {
@@ -248,7 +249,8 @@ const detectDataKeys = (data: any[]): { xKey: string; yKey: string } => {
     k.toLowerCase().includes('label') ||
     k.toLowerCase().includes('category') ||
     k.toLowerCase().includes('month') ||
-    k.toLowerCase().includes('date')
+    k.toLowerCase().includes('date') ||
+    k.toLowerCase().includes('product')
   ) || keys[0];
   
   const valueKey = keys.find(k => 
@@ -256,6 +258,8 @@ const detectDataKeys = (data: any[]): { xKey: string; yKey: string } => {
     k.toLowerCase().includes('amount') ||
     k.toLowerCase().includes('total') ||
     k.toLowerCase().includes('count') ||
+    k.toLowerCase().includes('price') ||
+    k.toLowerCase().includes('stock') ||
     !isNaN(Number(firstItem[k]))
   ) || keys[1] || keys[0];
   
@@ -288,6 +292,29 @@ const validateChartData = (data: string): { valid: boolean; error?: string; pars
   } catch (error) {
     return { valid: false, error: 'Invalid JSON format' };
   }
+};
+
+// ✅ FIXED: Custom tick formatter to handle long labels
+const CustomXAxisTick = ({ x, y, payload, dataLength }: any) => {
+  const maxLength = dataLength > 20 ? 8 : dataLength > 10 ? 12 : 20;
+  const text = String(payload.value);
+  const truncated = text.length > maxLength ? text.substring(0, maxLength) + '...' : text;
+  
+  return (
+    <g transform={`translate(${x},${y})`}>
+      <text 
+        x={0} 
+        y={0} 
+        dy={16} 
+        textAnchor="end" 
+        fill="#6b7280" 
+        transform="rotate(-45)"
+        fontSize={dataLength > 20 ? 9 : 11}
+      >
+        {truncated}
+      </text>
+    </g>
+  );
 };
 
 // ==================== COMPONENTS ====================
@@ -384,7 +411,7 @@ const ColorPicker = ({
   );
 };
 
-// Chart Preview Component
+// ✅ FIXED: Chart Preview Component with proper rendering for large datasets
 const ChartPreview = ({ 
   chartType, 
   chartData, 
@@ -406,19 +433,42 @@ const ChartPreview = ({
 
   const normalizedData = normalizeChartData(chartData);
   const { xKey, yKey } = detectDataKeys(normalizedData);
-  const height = size === 'small' ? 200 : size === 'medium' ? 250 : 300;
+  const dataLength = normalizedData.length;
+  
+  // ✅ FIXED: Dynamic height based on data size
+  const baseHeight = size === 'small' ? 250 : size === 'medium' ? 300 : 350;
+  const height = dataLength > 20 ? baseHeight + 50 : baseHeight;
+
+  // ✅ FIXED: Dynamic margins for large datasets
+  const chartMargin = dataLength > 15 
+    ? { top: 5, right: 30, left: 20, bottom: 80 }
+    : { top: 5, right: 30, left: 20, bottom: 50 };
 
   const renderChart = () => {
     switch (chartType) {
       case 'line':
         return (
           <ResponsiveContainer width="100%" height={height}>
-            <LineChart data={normalizedData}>
+            <LineChart data={normalizedData} margin={chartMargin}>
               <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-              <XAxis dataKey={xKey} stroke="#6b7280" style={{ fontSize: '11px' }} />
+              <XAxis 
+                dataKey={xKey} 
+                stroke="#6b7280" 
+                angle={dataLength > 10 ? -45 : 0}
+                textAnchor={dataLength > 10 ? "end" : "middle"}
+                height={dataLength > 10 ? 80 : 30}
+                interval={0}
+                tick={{ fontSize: dataLength > 20 ? 9 : 11 }}
+              />
               <YAxis stroke="#6b7280" style={{ fontSize: '11px' }} />
               <Tooltip />
-              <Line type="monotone" dataKey={yKey} stroke={chartColors[0]} strokeWidth={2} />
+              <Line 
+                type="monotone" 
+                dataKey={yKey} 
+                stroke={chartColors[0]} 
+                strokeWidth={2}
+                dot={dataLength < 30}
+              />
             </LineChart>
           </ResponsiveContainer>
         );
@@ -426,9 +476,17 @@ const ChartPreview = ({
       case 'bar':
         return (
           <ResponsiveContainer width="100%" height={height}>
-            <BarChart data={normalizedData}>
+            <BarChart data={normalizedData} margin={chartMargin}>
               <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-              <XAxis dataKey={xKey} stroke="#6b7280" style={{ fontSize: '11px' }} />
+              <XAxis 
+                dataKey={xKey} 
+                stroke="#6b7280" 
+                angle={dataLength > 10 ? -45 : 0}
+                textAnchor={dataLength > 10 ? "end" : "middle"}
+                height={dataLength > 10 ? 80 : 30}
+                interval={0}
+                tick={{ fontSize: dataLength > 20 ? 9 : 11 }}
+              />
               <YAxis stroke="#6b7280" style={{ fontSize: '11px' }} />
               <Tooltip />
               <Bar dataKey={yKey} fill={chartColors[0]} radius={[6, 6, 0, 0]}>
@@ -450,14 +508,15 @@ const ChartPreview = ({
                 nameKey={xKey}
                 cx="50%"
                 cy="50%"
-                outerRadius={80}
-                label
+                outerRadius={Math.min(height / 3, 100)}
+                label={dataLength < 15}
               >
                 {normalizedData.map((entry, index) => (
                   <Cell key={`cell-${index}`} fill={chartColors[index % chartColors.length]} />
                 ))}
               </Pie>
               <Tooltip />
+              {dataLength < 15 && <Legend />}
             </PieChart>
           </ResponsiveContainer>
         );
@@ -465,12 +524,26 @@ const ChartPreview = ({
       case 'area':
         return (
           <ResponsiveContainer width="100%" height={height}>
-            <AreaChart data={normalizedData}>
+            <AreaChart data={normalizedData} margin={chartMargin}>
               <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-              <XAxis dataKey={xKey} stroke="#6b7280" style={{ fontSize: '11px' }} />
+              <XAxis 
+                dataKey={xKey} 
+                stroke="#6b7280" 
+                angle={dataLength > 10 ? -45 : 0}
+                textAnchor={dataLength > 10 ? "end" : "middle"}
+                height={dataLength > 10 ? 80 : 30}
+                interval={0}
+                tick={{ fontSize: dataLength > 20 ? 9 : 11 }}
+              />
               <YAxis stroke="#6b7280" style={{ fontSize: '11px' }} />
               <Tooltip />
-              <Area type="monotone" dataKey={yKey} stroke={chartColors[0]} fill={chartColors[0]} fillOpacity={0.6} />
+              <Area 
+                type="monotone" 
+                dataKey={yKey} 
+                stroke={chartColors[0]} 
+                fill={chartColors[0]} 
+                fillOpacity={0.6} 
+              />
             </AreaChart>
           </ResponsiveContainer>
         );
@@ -478,9 +551,16 @@ const ChartPreview = ({
       case 'scatter':
         return (
           <ResponsiveContainer width="100%" height={height}>
-            <ScatterChart>
+            <ScatterChart margin={chartMargin}>
               <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-              <XAxis dataKey={xKey} stroke="#6b7280" style={{ fontSize: '11px' }} />
+              <XAxis 
+                dataKey={xKey} 
+                stroke="#6b7280" 
+                angle={dataLength > 10 ? -45 : 0}
+                textAnchor={dataLength > 10 ? "end" : "middle"}
+                height={dataLength > 10 ? 80 : 30}
+                tick={{ fontSize: dataLength > 20 ? 9 : 11 }}
+              />
               <YAxis dataKey={yKey} stroke="#6b7280" style={{ fontSize: '11px' }} />
               <Tooltip cursor={{ strokeDasharray: '3 3' }} />
               <Scatter data={normalizedData} fill={chartColors[0]} />
@@ -498,13 +578,18 @@ const ChartPreview = ({
       <div className="flex items-center gap-2 mb-3">
         <Eye className="h-4 w-4 text-blue-600" />
         <span className="text-sm font-medium">Live Preview</span>
+        {dataLength > 15 && (
+          <Badge variant="outline" className="text-xs">
+            {dataLength} data points
+          </Badge>
+        )}
       </div>
       {renderChart()}
     </div>
   );
 };
 
-// Sortable Chart Card Component
+// ✅ FIXED: Sortable Chart Card with proper rendering
 const SortableChartCard = ({ 
   chart, 
   onEdit, 
@@ -550,19 +635,42 @@ const SortableChartCard = ({
     const normalizedData = normalizeChartData(chart.data);
     const { xKey, yKey } = detectDataKeys(normalizedData);
     const chartColors = chart.config.colors || COLORS;
-    const height = CHART_SIZE_CONFIG[chart.size || 'medium'].height;
+    const dataLength = normalizedData.length;
+    
+    // ✅ FIXED: Dynamic height and margins based on data size and chart size
+    const baseHeight = CHART_SIZE_CONFIG[chart.size || 'medium'].height;
+    const height = dataLength > 20 ? baseHeight + 80 : baseHeight;
+    
+    const chartMargin = dataLength > 15 
+      ? { top: 5, right: 30, left: 20, bottom: 100 }
+      : { top: 5, right: 30, left: 20, bottom: 60 };
 
     switch (chart.type) {
       case 'line':
         return (
           <ResponsiveContainer width="100%" height={height}>
-            <LineChart data={normalizedData}>
+            <LineChart data={normalizedData} margin={chartMargin}>
               <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-              <XAxis dataKey={chart.config.xKey || xKey} stroke="#6b7280" style={{ fontSize: '12px' }} />
+              <XAxis 
+                dataKey={chart.config.xKey || xKey} 
+                stroke="#6b7280" 
+                angle={dataLength > 10 ? -45 : 0}
+                textAnchor={dataLength > 10 ? "end" : "middle"}
+                height={dataLength > 10 ? 90 : 30}
+                interval={0}
+                tick={{ fontSize: dataLength > 20 ? 9 : 11 }}
+              />
               <YAxis stroke="#6b7280" style={{ fontSize: '12px' }} />
               <Tooltip contentStyle={{ backgroundColor: 'white', border: '1px solid #e5e7eb', borderRadius: '8px' }} />
-              <Legend />
-              <Line type="monotone" dataKey={chart.config.yKey || yKey} stroke={chartColors[0]} strokeWidth={2} dot={{ fill: chartColors[0], r: 4 }} />
+              <Legend wrapperStyle={{ paddingTop: '10px' }} />
+              <Line 
+                type="monotone" 
+                dataKey={chart.config.yKey || yKey} 
+                stroke={chartColors[0]} 
+                strokeWidth={2} 
+                dot={dataLength < 30 ? { fill: chartColors[0], r: 4 } : false}
+                activeDot={{ r: 6 }}
+              />
             </LineChart>
           </ResponsiveContainer>
         );
@@ -570,12 +678,20 @@ const SortableChartCard = ({
       case 'bar':
         return (
           <ResponsiveContainer width="100%" height={height}>
-            <BarChart data={normalizedData}>
+            <BarChart data={normalizedData} margin={chartMargin}>
               <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-              <XAxis dataKey={chart.config.xKey || xKey} stroke="#6b7280" style={{ fontSize: '12px' }} />
+              <XAxis 
+                dataKey={chart.config.xKey || xKey} 
+                stroke="#6b7280" 
+                angle={dataLength > 10 ? -45 : 0}
+                textAnchor={dataLength > 10 ? "end" : "middle"}
+                height={dataLength > 10 ? 90 : 30}
+                interval={0}
+                tick={{ fontSize: dataLength > 20 ? 9 : 11 }}
+              />
               <YAxis stroke="#6b7280" style={{ fontSize: '12px' }} />
               <Tooltip contentStyle={{ backgroundColor: 'white', border: '1px solid #e5e7eb', borderRadius: '8px' }} />
-              <Legend />
+              <Legend wrapperStyle={{ paddingTop: '10px' }} />
               <Bar dataKey={chart.config.yKey || yKey} fill={chartColors[0]} radius={[8, 8, 0, 0]}>
                 {normalizedData.map((entry, index) => (
                   <Cell key={`cell-${index}`} fill={chartColors[index % chartColors.length]} />
@@ -595,15 +711,15 @@ const SortableChartCard = ({
                 nameKey={chart.config.nameKey || chart.config.xKey || xKey}
                 cx="50%"
                 cy="50%"
-                outerRadius={height / 3}
-                label={(entry) => entry[chart.config.nameKey || chart.config.xKey || xKey]}
+                outerRadius={Math.min(height / 3.5, 120)}
+                label={dataLength < 15 ? (entry) => entry[chart.config.nameKey || chart.config.xKey || xKey] : false}
               >
                 {normalizedData.map((entry, index) => (
                   <Cell key={`cell-${index}`} fill={chartColors[index % chartColors.length]} />
                 ))}
               </Pie>
               <Tooltip contentStyle={{ backgroundColor: 'white', border: '1px solid #e5e7eb', borderRadius: '8px' }} />
-              <Legend />
+              {dataLength < 15 && <Legend wrapperStyle={{ paddingTop: '10px' }} />}
             </PieChart>
           </ResponsiveContainer>
         );
@@ -611,13 +727,27 @@ const SortableChartCard = ({
       case 'area':
         return (
           <ResponsiveContainer width="100%" height={height}>
-            <AreaChart data={normalizedData}>
+            <AreaChart data={normalizedData} margin={chartMargin}>
               <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-              <XAxis dataKey={chart.config.xKey || xKey} stroke="#6b7280" style={{ fontSize: '12px' }} />
+              <XAxis 
+                dataKey={chart.config.xKey || xKey} 
+                stroke="#6b7280" 
+                angle={dataLength > 10 ? -45 : 0}
+                textAnchor={dataLength > 10 ? "end" : "middle"}
+                height={dataLength > 10 ? 90 : 30}
+                interval={0}
+                tick={{ fontSize: dataLength > 20 ? 9 : 11 }}
+              />
               <YAxis stroke="#6b7280" style={{ fontSize: '12px' }} />
               <Tooltip contentStyle={{ backgroundColor: 'white', border: '1px solid #e5e7eb', borderRadius: '8px' }} />
-              <Legend />
-              <Area type="monotone" dataKey={chart.config.yKey || yKey} stroke={chartColors[0]} fill={chartColors[0]} fillOpacity={0.6} />
+              <Legend wrapperStyle={{ paddingTop: '10px' }} />
+              <Area 
+                type="monotone" 
+                dataKey={chart.config.yKey || yKey} 
+                stroke={chartColors[0]} 
+                fill={chartColors[0]} 
+                fillOpacity={0.6} 
+              />
             </AreaChart>
           </ResponsiveContainer>
         );
@@ -625,12 +755,19 @@ const SortableChartCard = ({
       case 'scatter':
         return (
           <ResponsiveContainer width="100%" height={height}>
-            <ScatterChart>
+            <ScatterChart margin={chartMargin}>
               <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-              <XAxis dataKey={chart.config.xKey || xKey} stroke="#6b7280" style={{ fontSize: '12px' }} />
+              <XAxis 
+                dataKey={chart.config.xKey || xKey} 
+                stroke="#6b7280" 
+                angle={dataLength > 10 ? -45 : 0}
+                textAnchor={dataLength > 10 ? "end" : "middle"}
+                height={dataLength > 10 ? 90 : 30}
+                tick={{ fontSize: dataLength > 20 ? 9 : 11 }}
+              />
               <YAxis dataKey={chart.config.yKey || yKey} stroke="#6b7280" style={{ fontSize: '12px' }} />
               <Tooltip cursor={{ strokeDasharray: '3 3' }} contentStyle={{ backgroundColor: 'white', border: '1px solid #e5e7eb', borderRadius: '8px' }} />
-              <Legend />
+              <Legend wrapperStyle={{ paddingTop: '10px' }} />
               <Scatter data={normalizedData} fill={chartColors[0]} />
             </ScatterChart>
           </ResponsiveContainer>
@@ -658,11 +795,16 @@ const SortableChartCard = ({
                 <GripVertical className="h-5 w-5 text-muted-foreground" />
               </div>
               <div className="flex-1">
-                <CardTitle className="text-base font-semibold flex items-center gap-2">
+                <CardTitle className="text-base font-semibold flex items-center gap-2 flex-wrap">
                   {chart.title}
                   <Badge variant="outline" className="text-xs">
                     {chart.type}
                   </Badge>
+                  {chart.data.length > 15 && (
+                    <Badge variant="secondary" className="text-xs">
+                      {chart.data.length} items
+                    </Badge>
+                  )}
                 </CardTitle>
                 {chart.notes && (
                   <p className="text-xs text-muted-foreground mt-1">{chart.notes}</p>
@@ -790,6 +932,7 @@ const CustomDashboard = () => {
   const [storageError, setStorageError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isSyncing, setIsSyncing] = useState(false);
+
   // Form states
   const [dashboardName, setDashboardName] = useState('');
   const [dashboardDescription, setDashboardDescription] = useState('');
@@ -799,8 +942,11 @@ const CustomDashboard = () => {
   const [chartData, setChartData] = useState('');
   const [chartNotes, setChartNotes] = useState('');
   const [chartColors, setChartColors] = useState<string[]>(COLORS);
-  const [dataValidation, setDataValidation] = useState<{ valid: boolean; error?: string; parsed?: any[] }>({ valid: true });
+  
+  // Data validation
+  const dataValidation = useMemo(() => validateChartData(chartData), [chartData]);
 
+  // Drag and drop
   const sensors = useSensors(
     useSensor(PointerSensor),
     useSensor(KeyboardSensor, {
@@ -808,59 +954,94 @@ const CustomDashboard = () => {
     })
   );
 
-  // Keyboard shortcuts
+  // ==================== LIFECYCLE ====================
   useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
-        e.preventDefault();
-        if (currentDashboard) {
-          setIsAddChartDialogOpen(true);
-        }
-      }
-    };
+    loadDashboards();
+    loadActivityLog();
+  }, [user]);
 
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
+  useEffect(() => {
+    if (currentDashboard) {
+      saveDashboards();
+    }
   }, [currentDashboard]);
 
-  // Validate chart data on change
-  useEffect(() => {
-    if (chartData) {
-      const validation = validateChartData(chartData);
-      setDataValidation(validation);
-    } else {
-      setDataValidation({ valid: true });
-    }
-  }, [chartData]);
-
+  // ==================== STORAGE FUNCTIONS ====================
   const loadDashboards = () => {
     try {
-      const storageKey = getStorageKey(user?.id);
-      const saved = loadFromLocalStorage(storageKey);
+      setIsLoading(true);
+      const key = getStorageKey(user?.id);
+      const stored = loadFromLocalStorage(key);
       
-      if (saved && Array.isArray(saved)) {
-        setDashboards(saved);
-        if (saved.length > 0) {
-          setCurrentDashboard(saved[0]);
+      if (stored && Array.isArray(stored)) {
+        setDashboards(stored);
+        if (stored.length > 0 && !currentDashboard) {
+          setCurrentDashboard(stored[0]);
         }
-        setStorageError(null);
       } else {
-        setDashboards([]);
-        setCurrentDashboard(null);
+        // Initialize with a default dashboard
+        const defaultDashboard: Dashboard = {
+          id: crypto.randomUUID(),
+          name: 'My First Dashboard',
+          description: 'Welcome! Create your first chart to get started.',
+          charts: [],
+          layout: '2',
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        };
+        setDashboards([defaultDashboard]);
+        setCurrentDashboard(defaultDashboard);
+        saveToLocalStorage(key, [defaultDashboard]);
       }
+      setStorageError(null);
     } catch (error) {
       console.error('Error loading dashboards:', error);
-      setStorageError('Failed to load dashboards');
-      setDashboards([]);
+      setStorageError('Failed to load dashboards from storage');
+      toast({
+        title: "Error",
+        description: "Failed to load your dashboards",
+        variant: "destructive"
+      });
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const saveDashboards = () => {
+    try {
+      const key = getStorageKey(user?.id);
+      const updated = dashboards.map(d => 
+        d.id === currentDashboard?.id ? currentDashboard : d
+      );
+      
+      if (!updated.find(d => d.id === currentDashboard?.id) && currentDashboard) {
+        updated.push(currentDashboard);
+      }
+      
+      const success = saveToLocalStorage(key, updated);
+      if (success) {
+        setDashboards(updated);
+        setStorageError(null);
+      } else {
+        throw new Error('Failed to save');
+      }
+    } catch (error) {
+      console.error('Error saving dashboards:', error);
+      setStorageError('Failed to save dashboard changes');
+      toast({
+        title: "Warning",
+        description: "Your changes may not be saved",
+        variant: "destructive"
+      });
     }
   };
 
   const loadActivityLog = () => {
     try {
-      const activityKey = getActivityLogKey(user?.id);
-      const saved = loadFromLocalStorage(activityKey);
-      if (saved && Array.isArray(saved)) {
-        setActivityLog(saved.slice(0, 10)); // Keep last 10 activities
+      const key = getActivityLogKey(user?.id);
+      const stored = loadFromLocalStorage(key);
+      if (stored && Array.isArray(stored)) {
+        setActivityLog(stored.slice(0, 50)); // Keep last 50 activities
       }
     } catch (error) {
       console.error('Error loading activity log:', error);
@@ -869,347 +1050,92 @@ const CustomDashboard = () => {
 
   const addActivity = (action: string, chartTitle?: string) => {
     const newActivity: ActivityLog = {
-      id: `activity_${Date.now()}`,
+      id: crypto.randomUUID(),
       action,
       chartTitle,
       timestamp: new Date().toISOString()
     };
     
-    const updated = [newActivity, ...activityLog].slice(0, 10);
+    const updated = [newActivity, ...activityLog].slice(0, 50);
     setActivityLog(updated);
     
-    const activityKey = getActivityLogKey(user?.id);
-    saveToLocalStorage(activityKey, updated);
+    const key = getActivityLogKey(user?.id);
+    saveToLocalStorage(key, updated);
   };
 
-  const saveDashboards = (updatedDashboards: Dashboard[]) => {
-    try {
-      const storageKey = getStorageKey(user?.id);
-      const success = saveToLocalStorage(storageKey, updatedDashboards);
-      
-      if (success) {
-        setDashboards(updatedDashboards);
-        setStorageError(null);
-      } else {
-        setStorageError('Failed to save dashboards');
-        toast({
-          title: "Storage Error",
-          description: "Changes may not persist.",
-          variant: "destructive",
-        });
-      }
-    } catch (error) {
-      console.error('Error saving dashboards:', error);
-      setStorageError('Failed to save dashboards');
-    }
-  };
-
-/**
- * Load dashboards from database on component mount
- */
-useEffect(() => {
-  const initializeDashboards = async () => {
-    if (!user?.id) {
-      setIsLoading(false);
+  // ==================== DASHBOARD FUNCTIONS ====================
+  const createDashboard = () => {
+    if (!dashboardName.trim()) {
+      toast({
+        title: "Error",
+        description: "Please enter a dashboard name",
+        variant: "destructive"
+      });
       return;
     }
 
-    try {
-      setIsLoading(true);
-      
-      // Check if API is available
-      const apiAvailable = await DashboardAPI.checkApiHealth();
-      
-      if (apiAvailable) {
-        // Try to fetch from database
-        const dbDashboards = await DashboardAPI.fetchDashboards(user.id);
-        
-        if (dbDashboards.length > 0) {
-          // Convert to frontend format
-          const formattedDashboards: Dashboard[] = dbDashboards.map(db => ({
-            id: db.dashboard_id,
-            name: db.name,
-            description: db.description || '',
-            charts: db.charts,
-            layout: '2' as GridLayout,
-            createdAt: db.created_at || new Date().toISOString(),
-            updatedAt: db.updated_at || new Date().toISOString()
-          }));
-          
-          setDashboards(formattedDashboards);
-          if (formattedDashboards.length > 0) {
-            setCurrentDashboard(formattedDashboards[0]);
-          }
-          console.log(`✅ Loaded ${dbDashboards.length} dashboards from database`);
-          
-          // Also save to localStorage as backup
-          saveToLocalStorage(getStorageKey(user.id), formattedDashboards);
-        } else {
-          // Check if we have localStorage data to migrate
-          await migrateLocalStorageToDatabase();
-        }
-      } else {
-        // Fallback to localStorage
-        loadFromLocalStorageOnly();
-      }
-    } catch (error) {
-      console.error('❌ Error loading dashboards:', error);
-      toast({
-        title: 'Error Loading Dashboards',
-        description: 'Failed to load dashboards. Using local storage.',
-        variant: 'destructive'
-      });
-      loadFromLocalStorageOnly();
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  initializeDashboards();
-  loadActivityLog();
-}, [user?.id]);
-
-/**
- * Load dashboards from localStorage only (fallback)
- */
-const loadFromLocalStorageOnly = () => {
-  const stored = loadFromLocalStorage(getStorageKey(user?.id));
-  if (stored && Array.isArray(stored)) {
-    setDashboards(stored);
-    if (stored.length > 0) {
-      setCurrentDashboard(stored[0]);
-    }
-    console.log(`✅ Loaded ${stored.length} dashboards from localStorage`);
-  }
-};
-
-/**
- * Migrate localStorage data to database
- */
-const migrateLocalStorageToDatabase = async () => {
-  if (!user?.id) return;
-
-  try {
-    const localDashboards = loadFromLocalStorage(getStorageKey(user.id));
-    
-    if (localDashboards && localDashboards.length > 0) {
-      console.log(`🔄 Migrating ${localDashboards.length} dashboards to database...`);
-      
-      const result = await DashboardAPI.migrateFromLocalStorage(user.id, localDashboards);
-      
-      if (result.success) {
-        toast({
-          title: 'Migration Complete',
-          description: result.message,
-        });
-        
-        // Reload from database
-        const dbDashboards = await DashboardAPI.fetchDashboards(user.id);
-        const formattedDashboards: Dashboard[] = dbDashboards.map(db => ({
-          id: db.dashboard_id,
-          name: db.name,
-          description: db.description || '',
-          charts: db.charts,
-          layout: '2' as GridLayout,
-          createdAt: db.created_at || new Date().toISOString(),
-          updatedAt: db.updated_at || new Date().toISOString()
-        }));
-        
-        setDashboards(formattedDashboards);
-        if (formattedDashboards.length > 0) {
-          setCurrentDashboard(formattedDashboards[0]);
-        }
-      }
-    }
-  } catch (error) {
-    console.error('❌ Migration failed:', error);
-  }
-};
-
-/**
- * Save dashboard to database and localStorage
- */
-const saveDashboardToDatabase = async (dashboard: Dashboard, isNew: boolean = false) => {
-  if (!user?.id) {
-    // Guest mode - save to localStorage only
-    saveToLocalStorage(getStorageKey(user?.id), dashboards);
-    return;
-  }
-
-  try {
-    setIsSyncing(true);
-
-    const dashboardData = {
-      dashboard_id: dashboard.id,
-      name: dashboard.name,
-      description: dashboard.description || '',
-      charts: dashboard.charts
+    const newDashboard: Dashboard = {
+      id: crypto.randomUUID(),
+      name: dashboardName.trim(),
+      description: dashboardDescription.trim(),
+      charts: [],
+      layout: '2',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
     };
 
-    if (isNew) {
-      await DashboardAPI.createDashboard(user.id, dashboardData);
-      console.log(`✅ Created dashboard in database: ${dashboard.name}`);
-    } else {
-      await DashboardAPI.updateDashboard(user.id, dashboard.id, dashboardData);
-      console.log(`✅ Updated dashboard in database: ${dashboard.name}`);
-    }
-
-    saveToLocalStorage(getStorageKey(user.id), dashboards);
-
-  } catch (error) {
-    console.error('❌ Error saving to database:', error);
-    
-    toast({
-      title: 'Sync Error',
-      description: 'Failed to sync with server. Changes saved locally.',
-      variant: 'destructive'
-    });
-
-    saveToLocalStorage(getStorageKey(user.id), dashboards);
-  } finally {
-    setIsSyncing(false);
-  }
-};
-
-/**
- * Delete dashboard from database and localStorage
- */
-const deleteDashboardFromDatabase = async (dashboardId: string) => {
-  if (!user?.id) {
-    const updated = dashboards.filter(d => d.id !== dashboardId);
+    const updated = [...dashboards, newDashboard];
     setDashboards(updated);
-    saveToLocalStorage(getStorageKey(user?.id), updated);
-    return;
-  }
-
-  try {
-    setIsSyncing(true);
-
-    await DashboardAPI.deleteDashboard(user.id, dashboardId);
-    console.log(`✅ Deleted dashboard from database: ${dashboardId}`);
-
-    const updated = dashboards.filter(d => d.id !== dashboardId);
-    setDashboards(updated);
-    saveToLocalStorage(getStorageKey(user.id), updated);
-
-  } catch (error) {
-    console.error('❌ Error deleting from database:', error);
+    setCurrentDashboard(newDashboard);
     
+    const key = getStorageKey(user?.id);
+    saveToLocalStorage(key, updated);
+
     toast({
-      title: 'Delete Error',
-      description: 'Failed to delete from server.',
-      variant: 'destructive'
+      title: "Dashboard Created",
+      description: `"${newDashboard.name}" has been created successfully`,
     });
-  } finally {
-    setIsSyncing(false);
-  }
-};
 
-
-
-
- const createDashboard = async () => {
-  if (!dashboardName.trim()) {
-    toast({
-      title: 'Name Required',
-      description: 'Please enter a dashboard name',
-      variant: 'destructive'
-    });
-    return;
-  }
-
-  const newDashboard: Dashboard = {
-    id: `dashboard_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-    name: dashboardName.trim(),
-    description: dashboardDescription.trim(),
-    charts: [],
-    layout: '2',
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString()
+    addActivity('Created dashboard', newDashboard.name);
+    
+    setIsCreateDialogOpen(false);
+    setDashboardName('');
+    setDashboardDescription('');
   };
 
-  const updated = [...dashboards, newDashboard];
-  setDashboards(updated);
-  setCurrentDashboard(newDashboard);
-  
-  // ✅ Save to database
-  await saveDashboardToDatabase(newDashboard, true);
-  
-  setIsCreateDialogOpen(false);
-  setDashboardName('');
-  setDashboardDescription('');
-  
-  addActivity('Created dashboard', dashboardName);
-  
-  toast({
-    title: "✅ Dashboard created",
-    description: `"${dashboardName}" is ready to use.`,
-  });
-};
-
-  const addChart = async () => {
+  const updateDashboardLayout = (layout: GridLayout) => {
     if (!currentDashboard) return;
-
-    const validation = validateChartData(chartData);
-    if (!validation.valid || !validation.parsed) {
-      toast({
-        title: "Invalid data",
-        description: validation.error,
-        variant: "destructive",
-      });
-      return;
-    }
-
-    const { xKey, yKey } = detectDataKeys(validation.parsed);
-
-    const newChart: ChartData = {
-      id: editingChart?.id || `chart_${Date.now()}`,
-      title: chartTitle,
-      type: chartType,
-      size: chartSize,
-      data: validation.parsed,
-      config: {
-        xKey: xKey,
-        yKey: yKey,
-        dataKey: yKey,
-        nameKey: xKey,
-        colors: chartColors,
-      },
-      notes: chartNotes,
-      createdAt: editingChart?.createdAt || new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    };
-
-    const updatedDashboard = {
+    
+    const updated = {
       ...currentDashboard,
-      charts: editingChart
-        ? currentDashboard.charts.map(c => c.id === editingChart.id ? newChart : c)
-        : [...currentDashboard.charts, newChart],
-      updatedAt: new Date().toISOString(),
+      layout,
+      updatedAt: new Date().toISOString()
     };
-
-    const updatedDashboards = dashboards.map(d =>
-      d.id === currentDashboard.id ? updatedDashboard : d
-    );
-
-    setDashboards(updatedDashboards);
-    setCurrentDashboard(updatedDashboard);
     
-    // ✅ Save to database
-    await saveDashboardToDatabase(updatedDashboard, false);
-    
-    setIsAddChartDialogOpen(false);
-    setEditingChart(null);
-    resetChartForm();
-    
-    addActivity(editingChart ? 'Updated chart' : 'Added chart', chartTitle);
-    
-    toast({
-      title: editingChart ? "✅ Chart updated" : "✅ Chart added",
-      description: `"${chartTitle}" ${editingChart ? 'updated' : 'added'} successfully.`,
-    });
+    setCurrentDashboard(updated);
+    addActivity(`Changed layout to ${layout} columns`);
   };
 
+  const deleteDashboard = (id: string) => {
+    const updated = dashboards.filter(d => d.id !== id);
+    setDashboards(updated);
+    
+    if (currentDashboard?.id === id) {
+      setCurrentDashboard(updated[0] || null);
+    }
+    
+    const key = getStorageKey(user?.id);
+    saveToLocalStorage(key, updated);
+
+    toast({
+      title: "Dashboard Deleted",
+      description: "The dashboard has been removed",
+    });
+
+    addActivity('Deleted dashboard');
+  };
+
+  // ==================== CHART FUNCTIONS ====================
   const resetChartForm = () => {
     setChartTitle('');
     setChartType('bar');
@@ -1217,74 +1143,72 @@ const deleteDashboardFromDatabase = async (dashboardId: string) => {
     setChartData('');
     setChartNotes('');
     setChartColors(COLORS);
-    setDataValidation({ valid: true });
   };
 
-  const deleteChart = async (chartId: string) => {
-    if (!currentDashboard) return;
+  const addChart = () => {
+    if (!currentDashboard) {
+      toast({
+        title: "Error",
+        description: "No dashboard selected",
+        variant: "destructive"
+      });
+      return;
+    }
 
-    const chart = currentDashboard.charts.find(c => c.id === chartId);
-    if (!chart) return;
+    if (!chartTitle.trim() || !dataValidation.valid || !chartData.trim()) {
+      toast({
+        title: "Error",
+        description: "Please fill in all required fields with valid data",
+        variant: "destructive"
+      });
+      return;
+    }
 
-    const updatedDashboard = {
-      ...currentDashboard,
-      charts: currentDashboard.charts.filter(c => c.id !== chartId),
-      updatedAt: new Date().toISOString(),
-    };
-
-    const updatedDashboards = dashboards.map(d =>
-      d.id === currentDashboard.id ? updatedDashboard : d
-    );
-
-    setDashboards(updatedDashboards);
-    setCurrentDashboard(updatedDashboard);
-    
-    // ✅ Save to database
-    await saveDashboardToDatabase(updatedDashboard, false);
-    
-    setDeleteChartId(null);
-    
-    addActivity('Deleted chart', chart.title);
-    
-    toast({
-      title: "🗑️ Chart deleted",
-      description: "The chart has been removed.",
-    });
-  };
-
-  const duplicateChart = async (chart: ChartData) => {
-    if (!currentDashboard) return;
+    const { xKey, yKey } = detectDataKeys(dataValidation.parsed!);
 
     const newChart: ChartData = {
-      ...chart,
-      id: `chart_${Date.now()}`,
-      title: `${chart.title} (Copy)`,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
+      id: editingChart?.id || crypto.randomUUID(),
+      title: chartTitle.trim(),
+      type: chartType,
+      size: chartSize,
+      data: dataValidation.parsed!,
+      config: {
+        xKey,
+        yKey,
+        colors: chartColors
+      },
+      notes: chartNotes.trim(),
+      createdAt: editingChart?.createdAt || new Date().toISOString(),
+      updatedAt: new Date().toISOString()
     };
+
+    let updatedCharts;
+    if (editingChart) {
+      updatedCharts = currentDashboard.charts.map(c => 
+        c.id === editingChart.id ? newChart : c
+      );
+      addActivity('Updated chart', newChart.title);
+    } else {
+      updatedCharts = [...currentDashboard.charts, newChart];
+      addActivity('Created chart', newChart.title);
+    }
 
     const updatedDashboard = {
       ...currentDashboard,
-      charts: [...currentDashboard.charts, newChart],
-      updatedAt: new Date().toISOString(),
+      charts: updatedCharts,
+      updatedAt: new Date().toISOString()
     };
 
-    const updatedDashboards = dashboards.map(d =>
-      d.id === currentDashboard.id ? updatedDashboard : d
-    );
-
-    setDashboards(updatedDashboards);
     setCurrentDashboard(updatedDashboard);
-    
-    // ✅ Save to database
-    await saveDashboardToDatabase(updatedDashboard, false);
-    
-    addActivity('Duplicated chart', chart.title);
-    
+
     toast({
-      title: "📋 Chart duplicated",
-      description: "A copy has been created.",
+      title: editingChart ? "Chart Updated" : "Chart Added",
+      description: `"${newChart.title}" has been ${editingChart ? 'updated' : 'added'} successfully`,
     });
+
+    setIsAddChartDialogOpen(false);
+    setEditingChart(null);
+    resetChartForm();
   };
 
   const editChart = (chart: ChartData) => {
@@ -1298,49 +1222,90 @@ const deleteDashboardFromDatabase = async (dashboardId: string) => {
     setIsAddChartDialogOpen(true);
   };
 
+  const deleteChart = (chartId: string) => {
+    if (!currentDashboard) return;
+
+    const chart = currentDashboard.charts.find(c => c.id === chartId);
+    const updatedCharts = currentDashboard.charts.filter(c => c.id !== chartId);
+    
+    const updatedDashboard = {
+      ...currentDashboard,
+      charts: updatedCharts,
+      updatedAt: new Date().toISOString()
+    };
+
+    setCurrentDashboard(updatedDashboard);
+    setDeleteChartId(null);
+
+    toast({
+      title: "Chart Deleted",
+      description: `"${chart?.title}" has been removed`,
+    });
+
+    addActivity('Deleted chart', chart?.title);
+  };
+
+  const copyChart = (chart: ChartData) => {
+    if (!currentDashboard) return;
+
+    const newChart: ChartData = {
+      ...chart,
+      id: crypto.randomUUID(),
+      title: `${chart.title} (Copy)`,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+
+    const updatedDashboard = {
+      ...currentDashboard,
+      charts: [...currentDashboard.charts, newChart],
+      updatedAt: new Date().toISOString()
+    };
+
+    setCurrentDashboard(updatedDashboard);
+
+    toast({
+      title: "Chart Duplicated",
+      description: `"${newChart.title}" has been created`,
+    });
+
+    addActivity('Duplicated chart', chart.title);
+  };
+
   const exportChartAsImage = async (chart: ChartData) => {
     try {
       const element = document.getElementById(`chart-${chart.id}`);
       if (!element) {
-        toast({
-          title: "Export failed",
-          description: "Chart element not found.",
-          variant: "destructive",
-        });
-        return;
+        throw new Error('Chart element not found');
       }
 
       const canvas = await html2canvas(element, {
         backgroundColor: '#ffffff',
-        scale: 2,
+        scale: 2
       });
 
-      canvas.toBlob((blob) => {
-        if (blob) {
-          const url = URL.createObjectURL(blob);
-          const link = document.createElement('a');
-          link.href = url;
-          link.download = `${chart.title.replace(/\s+/g, '_')}.png`;
-          link.click();
-          URL.revokeObjectURL(url);
-          
-          toast({
-            title: "📸 Chart exported",
-            description: "Downloaded as PNG image.",
-          });
-        }
-      });
-    } catch (error) {
-      console.error('Error exporting chart:', error);
+      const link = document.createElement('a');
+      link.download = `${chart.title.replace(/\s+/g, '_')}_${new Date().getTime()}.png`;
+      link.href = canvas.toDataURL('image/png');
+      link.click();
+
       toast({
-        title: "Export failed",
-        description: "An error occurred.",
-        variant: "destructive",
+        title: "Chart Exported",
+        description: `"${chart.title}" has been saved as an image`,
+      });
+
+      addActivity('Exported chart as image', chart.title);
+    } catch (error) {
+      console.error('Export error:', error);
+      toast({
+        title: "Export Failed",
+        description: "Could not export the chart as an image",
+        variant: "destructive"
       });
     }
   };
 
-  const handleDragEnd = async (event: any) => {
+  const handleDragEnd = (event: any) => {
     const { active, over } = event;
 
     if (!currentDashboard || !over || active.id === over.id) return;
@@ -1353,38 +1318,40 @@ const deleteDashboardFromDatabase = async (dashboardId: string) => {
     const updatedDashboard = {
       ...currentDashboard,
       charts: reorderedCharts,
-      updatedAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
     };
 
-    const updatedDashboards = dashboards.map(d =>
-      d.id === currentDashboard.id ? updatedDashboard : d
-    );
-
-    setDashboards(updatedDashboards);
     setCurrentDashboard(updatedDashboard);
-    
-    // ✅ Save to database
-    await saveDashboardToDatabase(updatedDashboard, false);
-    
     addActivity('Reordered charts');
+  };
+
+  const loadDataTemplate = (templateName: keyof typeof DATA_TEMPLATES) => {
+    const template = DATA_TEMPLATES[templateName];
+    setChartData(JSON.stringify(template, null, 2));
+    toast({
+      title: "Template Loaded",
+      description: `${templateName.charAt(0).toUpperCase() + templateName.slice(1)} data template has been loaded`,
+    });
   };
 
   const exportDashboard = () => {
     if (!currentDashboard) return;
-    
+
     const dataStr = JSON.stringify(currentDashboard, null, 2);
     const dataBlob = new Blob([dataStr], { type: 'application/json' });
     const url = URL.createObjectURL(dataBlob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `${currentDashboard.name.replace(/\s+/g, '_')}_dashboard.json`;
+    link.download = `dashboard_${currentDashboard.name.replace(/\s+/g, '_')}_${new Date().getTime()}.json`;
     link.click();
     URL.revokeObjectURL(url);
-    
+
     toast({
-      title: "📥 Dashboard exported",
-      description: "Downloaded as JSON file.",
+      title: "Dashboard Exported",
+      description: "Your dashboard has been exported as JSON",
     });
+
+    addActivity('Exported dashboard', currentDashboard.name);
   };
 
   const importDashboard = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -1395,491 +1362,309 @@ const deleteDashboardFromDatabase = async (dashboardId: string) => {
     reader.onload = (e) => {
       try {
         const imported = JSON.parse(e.target?.result as string);
+        
+        if (!imported.id || !imported.name || !Array.isArray(imported.charts)) {
+          throw new Error('Invalid dashboard format');
+        }
+
         const newDashboard: Dashboard = {
           ...imported,
-          id: `dashboard_${Date.now()}`,
+          id: crypto.randomUUID(),
           createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
         };
-        
+
         const updated = [...dashboards, newDashboard];
-        saveDashboards(updated);
+        setDashboards(updated);
         setCurrentDashboard(newDashboard);
-        
-        addActivity('Imported dashboard', newDashboard.name);
-        
+
+        const key = getStorageKey(user?.id);
+        saveToLocalStorage(key, updated);
+
         toast({
-          title: "📤 Dashboard imported",
-          description: `"${newDashboard.name}" imported successfully.`,
+          title: "Dashboard Imported",
+          description: `"${newDashboard.name}" has been imported successfully`,
         });
+
+        addActivity('Imported dashboard', newDashboard.name);
       } catch (error) {
+        console.error('Import error:', error);
         toast({
-          title: "Import failed",
-          description: "Invalid dashboard file.",
-          variant: "destructive",
+          title: "Import Failed",
+          description: "The file is not a valid dashboard export",
+          variant: "destructive"
         });
       }
     };
     reader.readAsText(file);
   };
 
-  const deleteDashboard = async () => {
-    if (!currentDashboard) return;
-
-    // ✅ Delete from database
-    await deleteDashboardFromDatabase(currentDashboard.id);
-    
-    const updated = dashboards.filter(d => d.id !== currentDashboard.id);
-    setDashboards(updated);
-    setCurrentDashboard(updated[0] || null);
-    
-    addActivity('Deleted dashboard', currentDashboard.name);
-    
-    toast({
-      title: "🗑️ Dashboard deleted",
-      description: "Dashboard removed.",
-    });
-  };
-
-  const updateDashboardLayout = async (layout: GridLayout) => {
-    if (!currentDashboard) return;
-
-    const updatedDashboard = {
-      ...currentDashboard,
-      layout,
-      updatedAt: new Date().toISOString(),
-    };
-
-    const updatedDashboards = dashboards.map(d =>
-      d.id === currentDashboard.id ? updatedDashboard : d
-    );
-
-    setDashboards(updatedDashboards);
-    setCurrentDashboard(updatedDashboard);
-    
-    // ✅ Save to database
-    await saveDashboardToDatabase(updatedDashboard, false);
-    
-    toast({
-      title: "Layout updated",
-      description: `Changed to ${layout}-column layout.`,
-    });
-  };
-
-  const loadDataTemplate = (template: keyof typeof DATA_TEMPLATES) => {
-    setChartData(JSON.stringify(DATA_TEMPLATES[template], null, 2));
-  };
-
-  // Filtered charts based on search
+  // ==================== FILTERED CHARTS ====================
   const filteredCharts = useMemo(() => {
     if (!currentDashboard) return [];
-    if (!searchQuery) return currentDashboard.charts;
+    if (!searchQuery.trim()) return currentDashboard.charts;
     
+    const query = searchQuery.toLowerCase();
     return currentDashboard.charts.filter(chart =>
-      chart.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      chart.type.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      chart.notes?.toLowerCase().includes(searchQuery.toLowerCase())
+      chart.title.toLowerCase().includes(query) ||
+      chart.type.toLowerCase().includes(query) ||
+      chart.notes?.toLowerCase().includes(query)
     );
   }, [currentDashboard, searchQuery]);
 
-  const getGridClass = () => {
-    switch (currentDashboard?.layout) {
-      case '1':
-        return 'grid-cols-1';
-      case '3':
-        return 'grid-cols-1 md:grid-cols-2 lg:grid-cols-3';
-      default:
-        return 'grid-cols-1 lg:grid-cols-2';
-    }
-  };
-
-  // ✅ Loading screen
+  // ==================== RENDER ====================
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center h-screen bg-background">
+      <div className="flex items-center justify-center h-screen">
         <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
+          <Activity className="h-12 w-12 mx-auto mb-4 text-blue-600 animate-spin" />
           <p className="text-muted-foreground">Loading dashboards...</p>
         </div>
       </div>
     );
   }
 
+  if (!currentDashboard) {
+    return (
+      <div className="flex items-center justify-center h-screen">
+        <Card className="w-96">
+          <CardHeader>
+            <CardTitle className="text-center">No Dashboard Found</CardTitle>
+          </CardHeader>
+          <CardContent className="text-center">
+            <p className="text-muted-foreground mb-4">Create your first dashboard to get started</p>
+            <Button onClick={() => setIsCreateDialogOpen(true)}>
+              <Plus className="mr-2 h-4 w-4" />
+              Create Dashboard
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
+  const gridClass = currentDashboard.layout === '1' 
+    ? 'grid-cols-1' 
+    : currentDashboard.layout === '2' 
+    ? 'grid-cols-1 md:grid-cols-2'
+    : 'grid-cols-1 md:grid-cols-2 lg:grid-cols-3';
+
   return (
-    <div className="h-screen flex flex-col bg-background">
+    <div className="container mx-auto p-4 md:p-6 space-y-6 max-w-7xl">
       {/* Header */}
-      <div className="flex items-center justify-between p-4 border-b border-border bg-white shadow-sm">
-        <div className="flex items-center gap-4">
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => navigate('/dashboard')}
-            className="flex items-center gap-2"
-          >
-            <ArrowLeft size={16} />
-            Back
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div className="flex items-center gap-3">
+          <Button variant="ghost" size="icon" onClick={() => navigate('/dashboard')}>
+            <ArrowLeft className="h-5 w-5" />
           </Button>
           <div>
-            <h1 className="text-xl font-semibold flex items-center gap-2">
-              <BarChart3 size={20} className="text-blue-600" />
+            <h1 className="text-3xl font-bold flex items-center gap-2">
+              <Sparkles className="h-8 w-8 text-blue-600" />
               Custom Dashboard
             </h1>
-            {currentDashboard && (
-              <p className="text-sm text-muted-foreground">
-                {currentDashboard.name}
-                {isSyncing && (
-                  <Badge variant="outline" className="ml-2">
-                    <Activity className="h-3 w-3 mr-1 animate-pulse" />
-                    Syncing...
-                  </Badge>
-                )}
-              </p>
-            )}
+            <p className="text-sm text-muted-foreground mt-1">
+              Create and manage your custom data visualizations
+            </p>
           </div>
         </div>
 
         <div className="flex items-center gap-2">
-          {currentDashboard && (
-            <>
-              <Select
-                value={currentDashboard.layout}
-                onValueChange={(value) => updateDashboardLayout(value as GridLayout)}
-              >
-                <SelectTrigger className="w-32">
-                  <Grid3x3 className="h-4 w-4 mr-2" />
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="1">1 Column</SelectItem>
-                  <SelectItem value="2">2 Columns</SelectItem>
-                  <SelectItem value="3">3 Columns</SelectItem>
-                </SelectContent>
-              </Select>
-              
-              <Button variant="outline" size="sm" onClick={exportDashboard}>
-                <Download className="mr-2 h-4 w-4" />
-                Export
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" className="gap-2">
+                <Layout className="h-4 w-4" />
+                {currentDashboard.name}
               </Button>
-              
-              <AlertDialog>
-                <AlertDialogTrigger asChild>
-                  <Button variant="outline" size="sm">
-                    <Trash2 className="mr-2 h-4 w-4" />
-                    Delete
-                  </Button>
-                </AlertDialogTrigger>
-                <AlertDialogContent>
-                  <AlertDialogHeader>
-                    <AlertDialogTitle>Delete Dashboard?</AlertDialogTitle>
-                    <AlertDialogDescription>
-                      This will permanently delete "{currentDashboard.name}" and all its charts. This action cannot be undone.
-                    </AlertDialogDescription>
-                  </AlertDialogHeader>
-                  <AlertDialogFooter>
-                    <AlertDialogCancel>Cancel</AlertDialogCancel>
-                    <AlertDialogAction onClick={deleteDashboard} className="bg-destructive text-destructive-foreground">
-                      Delete Dashboard
-                    </AlertDialogAction>
-                  </AlertDialogFooter>
-                </AlertDialogContent>
-              </AlertDialog>
-            </>
-          )}
-          
-          <label>
-            <Button variant="outline" size="sm" asChild>
-              <span>
-                <Upload className="mr-2 h-4 w-4" />
-                Import
-              </span>
-            </Button>
-            <input
-              type="file"
-              accept=".json"
-              className="hidden"
-              onChange={importDashboard}
-            />
-          </label>
-          
-          <Dialog open={isCreateDialogOpen} onOpenChange={setIsCreateDialogOpen}>
-            <DialogTrigger asChild>
-              <Button size="sm" className="bg-blue-600 hover:bg-blue-700">
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-64">
+              <DropdownMenuLabel>My Dashboards</DropdownMenuLabel>
+              <DropdownMenuSeparator />
+              {dashboards.map(dashboard => (
+                <DropdownMenuItem
+                  key={dashboard.id}
+                  onClick={() => setCurrentDashboard(dashboard)}
+                  className={currentDashboard.id === dashboard.id ? 'bg-accent' : ''}
+                >
+                  <div className="flex-1">
+                    <p className="font-medium">{dashboard.name}</p>
+                    <p className="text-xs text-muted-foreground">{dashboard.charts.length} charts</p>
+                  </div>
+                </DropdownMenuItem>
+              ))}
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onClick={() => setIsCreateDialogOpen(true)}>
                 <Plus className="mr-2 h-4 w-4" />
                 New Dashboard
-              </Button>
-            </DialogTrigger>
-            <DialogContent>
-              <DialogHeader>
-                <DialogTitle>Create New Dashboard</DialogTitle>
-                <DialogDescription>
-                  Create a custom dashboard to organize your charts
-                </DialogDescription>
-              </DialogHeader>
-              <div className="space-y-4">
-                <div>
-                  <Label htmlFor="dashboard-name">Dashboard Name *</Label>
-                  <Input
-                    id="dashboard-name"
-                    value={dashboardName}
-                    onChange={(e) => setDashboardName(e.target.value)}
-                    placeholder="Q1 Sales Dashboard"
-                    autoFocus
-                  />
-                </div>
-                <div>
-                  <Label htmlFor="dashboard-description">Description (Optional)</Label>
-                  <Input
-                    id="dashboard-description"
-                    value={dashboardDescription}
-                    onChange={(e) => setDashboardDescription(e.target.value)}
-                    placeholder="Track quarterly sales metrics and KPIs"
-                  />
-                </div>
-              </div>
-              <DialogFooter>
-                <Button variant="outline" onClick={() => setIsCreateDialogOpen(false)}>
-                  Cancel
-                </Button>
-                <Button onClick={createDashboard} disabled={!dashboardName.trim()}>
-                  <Sparkles className="mr-2 h-4 w-4" />
-                  Create Dashboard
-                </Button>
-              </DialogFooter>
-            </DialogContent>
-          </Dialog>
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+
+          <Button onClick={() => setIsAddChartDialogOpen(true)} className="bg-blue-600 hover:bg-blue-700">
+            <Plus className="mr-2 h-4 w-4" />
+            Add Chart
+          </Button>
         </div>
       </div>
 
-      {/* Dashboard Selector */}
-      {dashboards.length > 0 && (
-        <div className="px-4 py-3 border-b border-border bg-gray-50 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <Label className="text-sm font-medium">Dashboard:</Label>
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant="outline" size="sm" className="min-w-[200px] justify-between">
-                  {currentDashboard?.name || 'Select Dashboard'}
-                  <Badge variant="secondary" className="ml-2">
-                    {currentDashboard?.charts.length || 0}
-                  </Badge>
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="start" className="w-64">
-                <DropdownMenuLabel>Your Dashboards</DropdownMenuLabel>
-                <DropdownMenuSeparator />
-                {dashboards.map(dashboard => (
-                  <DropdownMenuItem
-                    key={dashboard.id}
-                    onClick={() => setCurrentDashboard(dashboard)}
-                    className="flex items-center justify-between"
-                  >
-                    <span>{dashboard.name}</span>
-                    <Badge variant="outline" className="text-xs">
-                      {dashboard.charts.length}
-                    </Badge>
-                  </DropdownMenuItem>
-                ))}
-              </DropdownMenuContent>
-            </DropdownMenu>
-          </div>
+      {/* Dashboard Stats */}
+      <DashboardStats dashboard={currentDashboard} />
 
-          {currentDashboard && currentDashboard.charts.length > 0 && (
-            <div className="flex items-center gap-2">
+      {/* Toolbar */}
+      <Card>
+        <CardContent className="p-4">
+          <div className="flex flex-col md:flex-row gap-4 items-center">
+            <div className="flex-1 w-full">
               <div className="relative">
-                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
+                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                 <Input
                   placeholder="Search charts..."
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  className="pl-9 w-64"
+                  className="pl-10"
                 />
               </div>
             </div>
-          )}
-        </div>
+
+            <div className="flex items-center gap-2">
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="outline" size="sm">
+                    <Grid3x3 className="mr-2 h-4 w-4" />
+                    Layout: {currentDashboard.layout}
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent>
+                  <DropdownMenuItem onClick={() => updateDashboardLayout('1')}>
+                    1 Column
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => updateDashboardLayout('2')}>
+                    2 Columns
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => updateDashboardLayout('3')}>
+                    3 Columns
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+
+              <Button variant="outline" size="sm" onClick={exportDashboard}>
+                <Download className="mr-2 h-4 w-4" />
+                Export
+              </Button>
+
+              <Button variant="outline" size="sm" asChild>
+                <label className="cursor-pointer">
+                  <Upload className="mr-2 h-4 w-4" />
+                  Import
+                  <input
+                    type="file"
+                    accept=".json"
+                    onChange={importDashboard}
+                    className="hidden"
+                  />
+                </label>
+              </Button>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Charts Grid */}
+      {filteredCharts.length === 0 ? (
+        <Card className="p-12">
+          <div className="text-center">
+            <BarChart3 className="mx-auto h-16 w-16 text-muted-foreground mb-4" />
+            <h3 className="text-lg font-semibold mb-2">No Charts Yet</h3>
+            <p className="text-muted-foreground mb-4">
+              {searchQuery ? 'No charts match your search' : 'Start by creating your first chart'}
+            </p>
+            {!searchQuery && (
+              <Button onClick={() => setIsAddChartDialogOpen(true)}>
+                <Plus className="mr-2 h-4 w-4" />
+                Create Chart
+              </Button>
+            )}
+          </div>
+        </Card>
+      ) : (
+        <DndContext
+          sensors={sensors}
+          collisionDetection={closestCenter}
+          onDragEnd={handleDragEnd}
+        >
+          <SortableContext items={filteredCharts.map(c => c.id)} strategy={rectSortingStrategy}>
+            <div className={`grid ${gridClass} gap-6`}>
+              {filteredCharts.map((chart) => (
+                <SortableChartCard
+                  key={chart.id}
+                  chart={chart}
+                  onEdit={editChart}
+                  onDelete={setDeleteChartId}
+                  onCopy={copyChart}
+                  onExport={exportChartAsImage}
+                  gridLayout={currentDashboard.layout}
+                />
+              ))}
+            </div>
+          </SortableContext>
+        </DndContext>
       )}
 
-      {/* Main Content */}
-      <div className="flex-1 overflow-auto p-6 bg-gray-50">
-        {storageError && (
-          <div className="mb-4 p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
-            <div className="flex items-start gap-2">
-              <AlertCircle className="h-5 w-5 text-yellow-600 mt-0.5" />
-              <div className="flex-1">
-                <h3 className="text-sm font-semibold text-yellow-900">Storage Warning</h3>
-                <p className="text-xs text-yellow-800 mt-1">{storageError}</p>
-              </div>
+      {/* Create Dashboard Dialog */}
+      <Dialog open={isCreateDialogOpen} onOpenChange={setIsCreateDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Create New Dashboard</DialogTitle>
+            <DialogDescription>
+              Set up a new dashboard to organize your charts
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div>
+              <Label htmlFor="dashboard-name">Dashboard Name *</Label>
+              <Input
+                id="dashboard-name"
+                value={dashboardName}
+                onChange={(e) => setDashboardName(e.target.value)}
+                placeholder="Sales Analytics Dashboard"
+                autoFocus
+              />
+            </div>
+            <div>
+              <Label htmlFor="dashboard-description">Description (Optional)</Label>
+              <Input
+                id="dashboard-description"
+                value={dashboardDescription}
+                onChange={(e) => setDashboardDescription(e.target.value)}
+                placeholder="Track monthly sales performance and trends"
+              />
             </div>
           </div>
-        )}
-
-        {!currentDashboard ? (
-          <div className="flex flex-col items-center justify-center h-full text-center">
-            <div className="max-w-md">
-              <BarChart3 size={80} className="text-gray-300 mb-6 mx-auto" />
-              <h2 className="text-3xl font-bold mb-3">Welcome to Custom Dashboards</h2>
-              <p className="text-muted-foreground mb-8 text-lg">
-                Create beautiful, interactive dashboards to visualize your data. Start by creating your first dashboard.
-              </p>
-              <Button 
-                onClick={() => setIsCreateDialogOpen(true)} 
-                size="lg"
-                className="bg-blue-600 hover:bg-blue-700"
-              >
-                <Plus className="mr-2 h-5 w-5" />
-                Create Your First Dashboard
-              </Button>
-              
-              <div className="mt-12 grid grid-cols-3 gap-4 text-left">
-                <div className="p-4 bg-white rounded-lg border">
-                  <LineChartIcon className="h-8 w-8 text-blue-600 mb-2" />
-                  <h3 className="font-semibold text-sm">Multiple Charts</h3>
-                  <p className="text-xs text-muted-foreground mt-1">
-                    Line, Bar, Pie, Area & Scatter charts
-                  </p>
-                </div>
-                <div className="p-4 bg-white rounded-lg border">
-                  <Palette className="h-8 w-8 text-purple-600 mb-2" />
-                  <h3 className="font-semibold text-sm">Custom Colors</h3>
-                  <p className="text-xs text-muted-foreground mt-1">
-                    10 color themes or create your own
-                  </p>
-                </div>
-                <div className="p-4 bg-white rounded-lg border">
-                  <Layout className="h-8 w-8 text-green-600 mb-2" />
-                  <h3 className="font-semibold text-sm">Flexible Layout</h3>
-                  <p className="text-xs text-muted-foreground mt-1">
-                    Drag & drop, resize, and organize
-                  </p>
-                </div>
-              </div>
-            </div>
-          </div>
-        ) : currentDashboard.charts.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-full text-center">
-            <LineChartIcon size={80} className="text-gray-300 mb-6" />
-            <h2 className="text-3xl font-bold mb-3">Add Your First Chart</h2>
-            <p className="text-muted-foreground mb-8 text-lg max-w-md">
-              Transform your data into beautiful visualizations. Paste JSON data or use a template to get started.
-            </p>
-            <Button 
-              onClick={() => setIsAddChartDialogOpen(true)} 
-              size="lg"
-              className="bg-blue-600 hover:bg-blue-700"
-            >
-              <Plus className="mr-2 h-5 w-5" />
-              Add Your First Chart
+          <DialogFooter>
+            <Button variant="outline" onClick={() => {
+              setIsCreateDialogOpen(false);
+              setDashboardName('');
+              setDashboardDescription('');
+            }}>
+              Cancel
             </Button>
-            
-            <div className="mt-12 flex items-center gap-2 text-sm text-muted-foreground">
-              <span className="px-3 py-1 bg-gray-100 rounded-lg font-mono">Ctrl + K</span>
-              <span>Quick add chart</span>
-            </div>
-          </div>
-        ) : (
-          <div className="max-w-7xl mx-auto">
-            {/* Dashboard Stats */}
-            <DashboardStats dashboard={currentDashboard} />
-
-            {/* Action Bar */}
-            <div className="flex items-center justify-between mb-6">
-              <div>
-                <h2 className="text-lg font-semibold flex items-center gap-2">
-                  {currentDashboard.name}
-                  {filteredCharts.length !== currentDashboard.charts.length && (
-                    <Badge variant="secondary">
-                      {filteredCharts.length} of {currentDashboard.charts.length}
-                    </Badge>
-                  )}
-                </h2>
-                {currentDashboard.description && (
-                  <p className="text-sm text-muted-foreground mt-1">{currentDashboard.description}</p>
-                )}
-              </div>
-              <Button 
-                onClick={() => setIsAddChartDialogOpen(true)} 
-                className="bg-blue-600 hover:bg-blue-700"
-              >
-                <Plus className="mr-2 h-4 w-4" />
-                Add Chart
-                <kbd className="ml-2 px-2 py-0.5 text-xs bg-blue-700 rounded">Ctrl+K</kbd>
-              </Button>
-            </div>
-
-            {filteredCharts.length === 0 ? (
-              <div className="text-center py-12">
-                <Filter className="h-12 w-12 text-gray-300 mx-auto mb-4" />
-                <p className="text-muted-foreground">No charts match your search</p>
-                <Button 
-                  variant="outline" 
-                  size="sm" 
-                  onClick={() => setSearchQuery('')}
-                  className="mt-4"
-                >
-                  Clear Search
-                </Button>
-              </div>
-            ) : (
-              <DndContext
-                sensors={sensors}
-                collisionDetection={closestCenter}
-                onDragEnd={handleDragEnd}
-              >
-                <SortableContext
-                  items={filteredCharts.map(c => c.id)}
-                  strategy={rectSortingStrategy}
-                >
-                  <div className={`grid ${getGridClass()} gap-6`}>
-                    {filteredCharts.map(chart => (
-                      <SortableChartCard
-                        key={chart.id}
-                        chart={chart}
-                        onEdit={editChart}
-                        onDelete={(id) => setDeleteChartId(id)}
-                        onCopy={duplicateChart}
-                        onExport={exportChartAsImage}
-                        gridLayout={currentDashboard.layout}
-                      />
-                    ))}
-                  </div>
-                </SortableContext>
-              </DndContext>
-            )}
-
-            {/* Recent Activity Sidebar (Optional) */}
-            {activityLog.length > 0 && (
-              <div className="mt-8 p-4 bg-white rounded-lg border">
-                <h3 className="text-sm font-semibold flex items-center gap-2 mb-3">
-                  <Activity className="h-4 w-4" />
-                  Recent Activity
-                </h3>
-                <div className="space-y-2">
-                  {activityLog.slice(0, 5).map(activity => (
-                    <div key={activity.id} className="text-xs text-muted-foreground flex items-center justify-between">
-                      <span>
-                        {activity.action}
-                        {activity.chartTitle && <strong className="text-foreground ml-1">{activity.chartTitle}</strong>}
-                      </span>
-                      <span className="text-xs">
-                        {new Date(activity.timestamp).toLocaleTimeString()}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
-        )}
-      </div>
+            <Button onClick={createDashboard} disabled={!dashboardName.trim()}>
+              Create Dashboard
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Add/Edit Chart Dialog */}
-      <Dialog open={isAddChartDialogOpen} onOpenChange={(open) => {
-        setIsAddChartDialogOpen(open);
-        if (!open) {
-          setEditingChart(null);
-          resetChartForm();
-        }
-      }}>
+      <Dialog 
+        open={isAddChartDialogOpen} 
+        onOpenChange={(open) => {
+          setIsAddChartDialogOpen(open);
+          if (!open) {
+            setEditingChart(null);
+            resetChartForm();
+          }
+        }}
+      >
         <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
@@ -1968,10 +1753,10 @@ const deleteDashboardFromDatabase = async (dashboardId: string) => {
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="small">Small (250px)</SelectItem>
-                      <SelectItem value="medium">Medium (350px)</SelectItem>
-                      <SelectItem value="large">Large (450px)</SelectItem>
-                      <SelectItem value="full">Full Width (500px)</SelectItem>
+                      <SelectItem value="small">Small (300px)</SelectItem>
+                      <SelectItem value="medium">Medium (400px)</SelectItem>
+                      <SelectItem value="large">Large (500px)</SelectItem>
+                      <SelectItem value="full">Full Width (600px)</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
@@ -2016,7 +1801,7 @@ const deleteDashboardFromDatabase = async (dashboardId: string) => {
                   id="chart-data"
                   value={chartData}
                   onChange={(e) => setChartData(e.target.value)}
-                  placeholder={`[\n  {"month": "Jan", "revenue": 4000},\n  {"month": "Feb", "revenue": 3000},\n  {"month": "Mar", "revenue": 5000}\n]`}
+                  placeholder={`[\n  {"product_name": "iPhone", "price": 999},\n  {"product_name": "Samsung", "price": 899}\n]`}
                   className={`w-full h-64 p-3 border rounded-md font-mono text-sm focus:outline-none focus:ring-2 ${
                     dataValidation.valid 
                       ? 'focus:ring-blue-500 border-gray-300' 
