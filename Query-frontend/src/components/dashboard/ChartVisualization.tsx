@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import {
   BarChart,
   Bar,
@@ -27,7 +27,11 @@ import {
   TrendingUp,
   Download,
   Maximize2,
+  Minimize2,
+  X,
 } from 'lucide-react';
+import html2canvas from 'html2canvas';
+import { useToast } from '@/hooks/use-toast';
 
 interface ChartVisualizationProps {
   data: string[][];
@@ -55,6 +59,9 @@ const ChartVisualization: React.FC<ChartVisualizationProps> = ({
 }) => {
   const [chartType, setChartType] = useState<ChartType>('bar');
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
+  const chartContainerRef = useRef<HTMLDivElement>(null);
+  const { toast } = useToast();
 
   // Detect chart compatibility
   const detectChartCompatibility = () => {
@@ -120,13 +127,74 @@ const ChartVisualization: React.FC<ChartVisualizationProps> = ({
     );
   }
 
-  const exportChart = () => {
-    // Simple export - you can enhance this with html2canvas
-    const chartElement = document.getElementById('chart-container');
-    if (chartElement) {
-      console.log('Export chart functionality - add html2canvas for image export');
+  // ✅ FIXED: Export chart as PNG
+  const exportChart = async () => {
+    if (!chartContainerRef.current) return;
+
+    setIsExporting(true);
+    try {
+      // Wait a bit for any animations to complete
+      await new Promise(resolve => setTimeout(resolve, 100));
+
+      const canvas = await html2canvas(chartContainerRef.current, {
+        backgroundColor: '#ffffff',
+        scale: 2, // Higher quality
+        logging: false,
+      });
+
+      // Convert to blob and download
+      canvas.toBlob((blob) => {
+        if (blob) {
+          const url = URL.createObjectURL(blob);
+          const link = document.createElement('a');
+          link.href = url;
+          link.download = `chart-${chartType}-${Date.now()}.png`;
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+          URL.revokeObjectURL(url);
+
+          toast({
+            title: "✅ Chart Exported",
+            description: "Chart has been downloaded as PNG",
+          });
+        }
+      });
+    } catch (error) {
+      console.error('Export failed:', error);
+      toast({
+        title: "❌ Export Failed",
+        description: "Could not export chart. Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsExporting(false);
     }
   };
+
+  // ✅ FIXED: Toggle fullscreen mode
+  const toggleFullscreen = () => {
+    setIsFullscreen(!isFullscreen);
+  };
+
+  // ✅ FIXED: Close fullscreen with Escape key
+  React.useEffect(() => {
+    const handleEscape = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && isFullscreen) {
+        setIsFullscreen(false);
+      }
+    };
+
+    if (isFullscreen) {
+      document.addEventListener('keydown', handleEscape);
+      document.body.style.overflow = 'hidden';
+    }
+
+    return () => {
+      document.removeEventListener('keydown', handleEscape);
+      document.body.style.overflow = 'unset';
+    };
+  }, [isFullscreen]);
 
   const renderChart = () => {
     const commonProps = {
@@ -301,81 +369,174 @@ const ChartVisualization: React.FC<ChartVisualizationProps> = ({
   };
 
   return (
-    <div className="space-y-4">
-      {/* Chart Type Selector */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <Badge variant="secondary" className="text-sm">
-            📊 Interactive Chart
-          </Badge>
-          <Badge variant="outline" className="text-sm">
-            {data.length} data points
-          </Badge>
-        </div>
-
-        <div className="flex items-center gap-2">
-          <div className="flex items-center gap-1 border border-gray-200 rounded-md p-1">
-            <Button
-              variant={chartType === 'bar' ? 'default' : 'ghost'}
-              size="sm"
-              onClick={() => setChartType('bar')}
-              className="h-8 px-3"
-            >
-              <BarChart3 className="h-4 w-4" />
-            </Button>
-            <Button
-              variant={chartType === 'line' ? 'default' : 'ghost'}
-              size="sm"
-              onClick={() => setChartType('line')}
-              className="h-8 px-3"
-            >
-              <LineChartIcon className="h-4 w-4" />
-            </Button>
-            <Button
-              variant={chartType === 'pie' ? 'default' : 'ghost'}
-              size="sm"
-              onClick={() => setChartType('pie')}
-              className="h-8 px-3"
-            >
-              <PieChartIcon className="h-4 w-4" />
-            </Button>
-            <Button
-              variant={chartType === 'area' ? 'default' : 'ghost'}
-              size="sm"
-              onClick={() => setChartType('area')}
-              className="h-8 px-3"
-            >
-              <TrendingUp className="h-4 w-4" />
-            </Button>
+    <>
+      <div className="space-y-4">
+        {/* Chart Type Selector */}
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Badge variant="secondary" className="text-sm">
+              📊 Interactive Chart
+            </Badge>
+            <Badge variant="outline" className="text-sm">
+              {data.length} data points
+            </Badge>
           </div>
 
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => setIsFullscreen(!isFullscreen)}
-          >
-            <Maximize2 className="h-4 w-4" />
-          </Button>
+          <div className="flex items-center gap-2">
+            <div className="flex items-center gap-1 border border-gray-200 rounded-md p-1">
+              <Button
+                variant={chartType === 'bar' ? 'default' : 'ghost'}
+                size="sm"
+                onClick={() => setChartType('bar')}
+                className="h-8 px-3"
+              >
+                <BarChart3 className="h-4 w-4" />
+              </Button>
+              <Button
+                variant={chartType === 'line' ? 'default' : 'ghost'}
+                size="sm"
+                onClick={() => setChartType('line')}
+                className="h-8 px-3"
+              >
+                <LineChartIcon className="h-4 w-4" />
+              </Button>
+              <Button
+                variant={chartType === 'pie' ? 'default' : 'ghost'}
+                size="sm"
+                onClick={() => setChartType('pie')}
+                className="h-8 px-3"
+              >
+                <PieChartIcon className="h-4 w-4" />
+              </Button>
+              <Button
+                variant={chartType === 'area' ? 'default' : 'ghost'}
+                size="sm"
+                onClick={() => setChartType('area')}
+                className="h-8 px-3"
+              >
+                <TrendingUp className="h-4 w-4" />
+              </Button>
+            </div>
 
-          <Button variant="outline" size="sm" onClick={exportChart}>
-            <Download className="h-4 w-4 mr-1" />
-            Export
-          </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={toggleFullscreen}
+              title={isFullscreen ? "Exit fullscreen" : "Fullscreen"}
+            >
+              {isFullscreen ? (
+                <Minimize2 className="h-4 w-4" />
+              ) : (
+                <Maximize2 className="h-4 w-4" />
+              )}
+            </Button>
+
+            <Button 
+              variant="outline" 
+              size="sm" 
+              onClick={exportChart}
+              disabled={isExporting}
+            >
+              <Download className="h-4 w-4 mr-1" />
+              {isExporting ? 'Exporting...' : 'Export'}
+            </Button>
+          </div>
+        </div>
+
+        {/* Chart Container */}
+        <div
+          ref={chartContainerRef}
+          className="bg-white rounded-lg border border-gray-200 p-6"
+        >
+          <ResponsiveContainer width="100%" height={400}>
+            {renderChart()}
+          </ResponsiveContainer>
         </div>
       </div>
 
-      {/* Chart Container */}
-      <div
-        id="chart-container"
-        className={`bg-white rounded-lg border border-gray-200 p-6 ${
-          isFullscreen ? 'fixed inset-4 z-50 shadow-2xl' : ''
-        }`}
-      >
-        <ResponsiveContainer width="100%" height={isFullscreen ? '90vh' : 400}>
-          {renderChart()}
-        </ResponsiveContainer>
-      </div>
-    </div>
+      {/* ✅ FIXED: Fullscreen Modal */}
+      {isFullscreen && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white rounded-lg w-full h-full max-w-7xl max-h-[90vh] flex flex-col shadow-2xl">
+            {/* Header */}
+            <div className="flex items-center justify-between p-4 border-b border-gray-200">
+              <div className="flex items-center gap-3">
+                <Badge variant="secondary" className="text-sm">
+                  📊 {chartType.charAt(0).toUpperCase() + chartType.slice(1)} Chart
+                </Badge>
+                <Badge variant="outline" className="text-sm">
+                  {data.length} data points
+                </Badge>
+              </div>
+
+              <div className="flex items-center gap-2">
+                {/* Chart type selector in fullscreen */}
+                <div className="flex items-center gap-1 border border-gray-200 rounded-md p-1">
+                  <Button
+                    variant={chartType === 'bar' ? 'default' : 'ghost'}
+                    size="sm"
+                    onClick={() => setChartType('bar')}
+                    className="h-8 px-3"
+                  >
+                    <BarChart3 className="h-4 w-4" />
+                  </Button>
+                  <Button
+                    variant={chartType === 'line' ? 'default' : 'ghost'}
+                    size="sm"
+                    onClick={() => setChartType('line')}
+                    className="h-8 px-3"
+                  >
+                    <LineChartIcon className="h-4 w-4" />
+                  </Button>
+                  <Button
+                    variant={chartType === 'pie' ? 'default' : 'ghost'}
+                    size="sm"
+                    onClick={() => setChartType('pie')}
+                    className="h-8 px-3"
+                  >
+                    <PieChartIcon className="h-4 w-4" />
+                  </Button>
+                  <Button
+                    variant={chartType === 'area' ? 'default' : 'ghost'}
+                    size="sm"
+                    onClick={() => setChartType('area')}
+                    className="h-8 px-3"
+                  >
+                    <TrendingUp className="h-4 w-4" />
+                  </Button>
+                </div>
+
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={exportChart}
+                  disabled={isExporting}
+                >
+                  <Download className="h-4 w-4 mr-1" />
+                  {isExporting ? 'Exporting...' : 'Export'}
+                </Button>
+
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={toggleFullscreen}
+                  className="h-8 w-8 p-0"
+                >
+                  <X className="h-5 w-5" />
+                </Button>
+              </div>
+            </div>
+
+            {/* Chart Content */}
+            <div className="flex-1 p-6 overflow-auto">
+              <ResponsiveContainer width="100%" height="100%">
+                {renderChart()}
+              </ResponsiveContainer>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
   );
 };
 

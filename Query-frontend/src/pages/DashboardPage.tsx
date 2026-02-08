@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useToast } from '@/hooks/use-toast';
 import { useChatSession } from '@/hooks/useChatSession';
 import { useAuth } from '@/contexts/AuthContext';
+import { useDatabase } from '@/contexts/DatabaseContext';
 import { LoadingSpinner } from '@/components/ui/loading-spinner';
 import Sidebar from '@/components/dashboard/Sidebar';
 import ChatInput from '@/components/dashboard/ChatInput';
@@ -30,6 +31,17 @@ const DashboardPage = () => {
   const { toast } = useToast();
   const { user } = useAuth();
   const navigate = useNavigate();
+  
+  // ✅ Use DatabaseContext instead of local state
+  const { 
+    isConnected, 
+    databaseInfo, 
+    databaseTables,
+    connect, 
+    disconnect,
+    fetchTables 
+  } = useDatabase();
+
   const {
     chatSessions,
     currentChatId,
@@ -44,11 +56,8 @@ const DashboardPage = () => {
 
   const [isSidebarCollapsed, setIsSidebarCollapsed] = React.useState(false);
   const [isLoading, setIsLoading] = React.useState(false);
-  const [isConnected, setIsConnected] = React.useState(false);
-  const [connectedDatabase, setConnectedDatabase] = React.useState<string | null>(null);
   const [isModalOpen, setIsModalOpen] = React.useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = React.useState(false);
-  const [databaseTables, setDatabaseTables] = React.useState<Array<{ name: string; rowCount: number; lastUpdated: string }>>([]);
   
   const [showTip, setShowTip] = useState(false);
   const [currentTip, setCurrentTip] = useState<any>(null);
@@ -59,7 +68,7 @@ const DashboardPage = () => {
   useEffect(() => {
     const loadDailyTip = async () => {
       try {
-        const response = await fetch('https://query-genie-h0cy.onrender.com/api/tips/daily');
+        const response = await fetch('http://localhost:8000/api/tips/daily');
         const tip = await response.json();
         setCurrentTip(tip);
         setShowTip(true);
@@ -76,7 +85,7 @@ const DashboardPage = () => {
     const loadSettings = async () => {
       if (!user?.id) return;
       try {
-        const response = await fetch(`https://query-genie-h0cy.onrender.com/api/settings/${user.id}`);
+        const response = await fetch(`http://localhost:8000/api/settings/${user.id}`);
         const settings = await response.json();
         setUserSettings(settings);
       } catch (error) {
@@ -90,47 +99,11 @@ const DashboardPage = () => {
     setFavoritesRefreshTrigger(prev => prev + 1);
   };
 
-  const fetchDatabaseTables = async () => {
-    try {
-      console.log('🔍 Fetching database tables from new endpoint...');
-      
-      const response = await fetch('https://query-genie-h0cy.onrender.com/api/database-tables');
-      
-      if (!response.ok) {
-        throw new Error('Failed to fetch tables');
-      }
-      
-      const data = await response.json();
-      
-      if (data.success && data.tables) {
-        console.log(`✅ Successfully fetched ${data.total} tables:`, data.tables);
-        setDatabaseTables(data.tables);
-        
-        toast({
-          title: "✅ Tables Loaded",
-          description: `Found ${data.total} table${data.total !== 1 ? 's' : ''} in the database`,
-        });
-      } else {
-        console.warn('⚠️ No tables found or empty response');
-        setDatabaseTables([]);
-      }
-    } catch (error) {
-      console.error('❌ Error fetching tables:', error);
-      toast({
-        title: "Warning",
-        description: "Could not fetch table information. Connection is active but table list unavailable.",
-        variant: "default",
-      });
-      setDatabaseTables([]);
-    }
-  };
-
   const handleConnect = async (data: DatabaseConnectionData) => {
     console.log('✅ Connection successful:', data);
-    setIsConnected(true);
-    setConnectedDatabase(data.database);
     
-    await fetchDatabaseTables();
+    // ✅ Use DatabaseContext connect method
+    await connect(data);
     
     setIsModalOpen(false);
     await createNewChat();
@@ -192,7 +165,7 @@ const DashboardPage = () => {
 
   const handleConfirmSql = async (sql: string) => {
     try {
-      const response = await fetch("https://query-genie-h0cy.onrender.com/api/confirm-sql", {
+      const response = await fetch("http://localhost:8000/api/confirm-sql", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -242,24 +215,13 @@ const DashboardPage = () => {
 
   const handleDeleteConnection = async () => {
     try {
-      const response = await fetch("https://query-genie-h0cy.onrender.com/api/disconnect", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
+      // ✅ Use DatabaseContext disconnect method
+      await disconnect();
+      
+      toast({
+        title: "Database Disconnected",
+        description: "Successfully disconnected from the database.",
       });
-
-      if (response.ok) {
-        setIsConnected(false);
-        setConnectedDatabase(null);
-        setDatabaseTables([]);
-        toast({
-          title: "Database Disconnected",
-          description: "Successfully disconnected from the database.",
-        });
-      } else {
-        throw new Error("Failed to disconnect");
-      }
     } catch (error) {
       toast({
         title: "Error disconnecting",
@@ -283,7 +245,7 @@ const DashboardPage = () => {
           isCollapsed={isSidebarCollapsed}
           onToggleCollapse={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
           isConnected={isConnected}
-          connectedDatabase={connectedDatabase}
+          connectedDatabase={databaseInfo?.database || null}
           onOpenModal={handleOpenModal}
           onNewChat={handleNewChat}
           onDeleteConnection={handleDeleteConnection}
@@ -314,7 +276,7 @@ const DashboardPage = () => {
               refreshFavorites={refreshFavorites}
               onFavoriteToggle={refreshFavorites}
               isConnected={isConnected}
-              connectedDatabase={connectedDatabase || ''}
+              connectedDatabase={databaseInfo?.database || ''}
               databaseTables={databaseTables}
             />
           </Suspense>

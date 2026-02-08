@@ -1,12 +1,22 @@
+import React, { createContext, useContext, useState, useCallback, useEffect } from 'react';
 
-import React, { createContext, useContext, useState, useCallback } from 'react';
-import { DatabaseConnectionData } from '@/components/DatabaseConnectionModal';
+export interface DatabaseConnectionData {
+  type: string;
+  host: string;
+  port: string;
+  user: string;
+  password?: string; // Optional, never stored
+  database: string;
+}
 
 interface DatabaseContextType {
   isConnected: boolean;
   databaseInfo: DatabaseConnectionData | null;
-  connect: (data: DatabaseConnectionData) => void;
-  disconnect: () => void;
+  databaseTables: Array<{ name: string; rowCount: number; lastUpdated: string }>;
+  connect: (data: DatabaseConnectionData) => Promise<void>;
+  disconnect: () => Promise<void>;
+  fetchTables: () => Promise<void>;
+  setDatabaseTables: React.Dispatch<React.SetStateAction<Array<{ name: string; rowCount: number; lastUpdated: string }>>>;
 }
 
 const DatabaseContext = createContext<DatabaseContextType | undefined>(undefined);
@@ -14,21 +24,69 @@ const DatabaseContext = createContext<DatabaseContextType | undefined>(undefined
 export const DatabaseProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [isConnected, setIsConnected] = useState(false);
   const [databaseInfo, setDatabaseInfo] = useState<DatabaseConnectionData | null>(null);
+  const [databaseTables, setDatabaseTables] = useState<Array<{ name: string; rowCount: number; lastUpdated: string }>>([]);
 
-  const connect = useCallback((data: DatabaseConnectionData) => {
+  // ✅ Restore connection from localStorage on mount
+  useEffect(() => {
+    const storedConnection = localStorage.getItem('dbConnection');
+    if (storedConnection) {
+      try {
+        const parsedConnection = JSON.parse(storedConnection);
+        console.log('🔄 Restoring database connection from localStorage:', parsedConnection.database);
+        setDatabaseInfo(parsedConnection);
+        setIsConnected(true);
+        
+        // Fetch tables after restoring connection
+        fetchTablesFromBackend();
+      } catch (error) {
+        console.error('Error restoring database connection:', error);
+        localStorage.removeItem('dbConnection');
+      }
+    }
+  }, []);
+
+  const fetchTablesFromBackend = async () => {
+    try {
+      console.log('📊 Fetching database tables from backend...');
+      
+      const response = await fetch('http://localhost:8000/api/database-tables');
+      
+      if (!response.ok) {
+        throw new Error('Failed to fetch tables');
+      }
+      
+      const data = await response.json();
+      
+      if (data.success && data.tables) {
+        console.log(`✅ Successfully fetched ${data.total} tables:`, data.tables);
+        setDatabaseTables(data.tables);
+      } else {
+        console.warn('⚠️ No tables found or empty response');
+        setDatabaseTables([]);
+      }
+    } catch (error) {
+      console.error('❌ Error fetching tables:', error);
+      setDatabaseTables([]);
+    }
+  };
+
+  const connect = useCallback(async (data: DatabaseConnectionData) => {
     console.log('🔗 Connecting to database:', data.database);
     setDatabaseInfo(data);
     setIsConnected(true);
 
-    // ✅ FIX: NEVER store password in localStorage
+    // ✅ Store connection info WITHOUT password
     localStorage.setItem('dbConnection', JSON.stringify({
       host: data.host,
       port: data.port,
       user: data.user,
       database: data.database,
       type: data.type
-      // PASSWORD REMOVED!
+      // PASSWORD NOT STORED!
     }));
+
+    // Fetch tables after connecting
+    await fetchTablesFromBackend();
   }, []);
 
   const disconnect = useCallback(async () => {
@@ -36,11 +94,11 @@ export const DatabaseProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     
     try {
       const token = localStorage.getItem('auth_token');
-      await fetch('https://query-genie-h0cy.onrender.com/api/disconnect', {
+      await fetch('http://localhost:8000/api/disconnect', {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}` // ✅ Add auth token
+          'Authorization': `Bearer ${token}`
         }
       });
     } catch (error) {
@@ -49,11 +107,24 @@ export const DatabaseProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
     setIsConnected(false);
     setDatabaseInfo(null);
+    setDatabaseTables([]);
     localStorage.removeItem('dbConnection');
   }, []);
 
+  const fetchTables = useCallback(async () => {
+    await fetchTablesFromBackend();
+  }, []);
+
   return (
-    <DatabaseContext.Provider value={{ isConnected, databaseInfo, connect, disconnect }}>
+    <DatabaseContext.Provider value={{ 
+      isConnected, 
+      databaseInfo, 
+      databaseTables,
+      connect, 
+      disconnect,
+      fetchTables,
+      setDatabaseTables
+    }}>
       {children}
     </DatabaseContext.Provider>
   );
