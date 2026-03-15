@@ -105,9 +105,24 @@ import {
 import html2canvas from 'html2canvas';
 
 // ==================== TYPES ====================
-type ChartType = 'line' | 'bar' | 'pie' | 'area' | 'scatter';
+type ChartType = 'line' | 'bar' | 'pie' | 'area' | 'scatter' | 'map' | 'card' | 'table';
 type ChartSize = 'small' | 'medium' | 'large' | 'full';
 type GridLayout = '1' | '2' | '3';
+
+interface CalculatedField {
+  name: string;
+  expression: string;
+}
+
+interface DashboardBookmark {
+  id: string;
+  name: string;
+  layout: GridLayout;
+  searchQuery: string;
+  slicerColumn: string;
+  slicerValue: string;
+  createdAt: string;
+}
 
 interface ChartData {
   id: string;
@@ -121,6 +136,7 @@ interface ChartData {
     dataKey?: string;
     nameKey?: string;
     colors?: string[];
+    calculatedFields?: CalculatedField[];
   };
   notes?: string;
   createdAt: string;
@@ -133,6 +149,9 @@ interface Dashboard {
   description?: string;
   charts: ChartData[];
   layout: GridLayout;
+  bookmarks?: DashboardBookmark[];
+  isPublished?: boolean;
+  shareSlug?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -237,6 +256,95 @@ const normalizeChartData = (data: any[]): any[] => {
     }));
   }
   return data;
+};
+
+const parseCsvLine = (line: string): string[] => {
+  const result: string[] = [];
+  let current = '';
+  let inQuotes = false;
+
+  for (let i = 0; i < line.length; i += 1) {
+    const char = line[i];
+
+    if (char === '"') {
+      if (inQuotes && line[i + 1] === '"') {
+        current += '"';
+        i += 1;
+      } else {
+        inQuotes = !inQuotes;
+      }
+      continue;
+    }
+
+    if (char === ',' && !inQuotes) {
+      result.push(current.trim());
+      current = '';
+      continue;
+    }
+
+    current += char;
+  }
+
+  result.push(current.trim());
+  return result;
+};
+
+const parseCsvText = (csvText: string): any[] => {
+  const lines = csvText
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+
+  if (lines.length < 2) {
+    throw new Error('CSV file must include a header and at least one data row');
+  }
+
+  const headers = parseCsvLine(lines[0]);
+  if (headers.some((header) => !header)) {
+    throw new Error('CSV header contains empty column names');
+  }
+
+  return lines.slice(1).map((line) => {
+    const values = parseCsvLine(line);
+    const row: Record<string, any> = {};
+
+    headers.forEach((header, index) => {
+      const raw = values[index] ?? '';
+      const numeric = Number(raw);
+      row[header] = raw !== '' && !Number.isNaN(numeric) ? numeric : raw;
+    });
+
+    return row;
+  });
+};
+
+const safeEvaluateExpression = (expression: string, row: Record<string, any>): number | string => {
+  try {
+    const sanitized = expression.replace(/[^a-zA-Z0-9_+\-*/().\s]/g, '');
+    const evaluator = new Function('row', `with (row) { return ${sanitized}; }`);
+    const value = evaluator(row);
+    return typeof value === 'number' && Number.isFinite(value) ? value : value ?? '';
+  } catch {
+    return '';
+  }
+};
+
+const applyCalculatedFields = (data: any[], fields: CalculatedField[]): any[] => {
+  if (!fields.length) return data;
+
+  return data.map((item) => {
+    const next = { ...item };
+    fields.forEach((field) => {
+      if (!field.name.trim() || !field.expression.trim()) return;
+      next[field.name.trim()] = safeEvaluateExpression(field.expression, next);
+    });
+    return next;
+  });
+};
+
+const applySlicer = (data: any[], column: string, value: string): any[] => {
+  if (!column || !value) return data;
+  return data.filter((row) => String(row[column] ?? '').toLowerCase() === value.toLowerCase());
 };
 
 const detectDataKeys = (data: any[]): { xKey: string; yKey: string } => {
@@ -567,6 +675,72 @@ const ChartPreview = ({
             </ScatterChart>
           </ResponsiveContainer>
         );
+
+      case 'map': {
+        const latKey = Object.keys(normalizedData[0] || {}).find((key) => ['lat', 'latitude', 'y'].includes(key.toLowerCase())) || yKey;
+        const lngKey = Object.keys(normalizedData[0] || {}).find((key) => ['lng', 'lon', 'long', 'longitude', 'x'].includes(key.toLowerCase())) || xKey;
+        return (
+          <ResponsiveContainer width="100%" height={height}>
+            <ScatterChart margin={chartMargin}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+              <XAxis dataKey={lngKey} stroke="#6b7280" name="Longitude" />
+              <YAxis dataKey={latKey} stroke="#6b7280" name="Latitude" />
+              <Tooltip cursor={{ strokeDasharray: '3 3' }} />
+              <Scatter data={normalizedData} fill={chartColors[0]} />
+            </ScatterChart>
+          </ResponsiveContainer>
+        );
+      }
+
+      case 'card': {
+        const values = normalizedData
+          .map((row) => Number(row[yKey]))
+          .filter((value) => Number.isFinite(value));
+        const total = values.reduce((sum, value) => sum + value, 0);
+        const average = values.length ? total / values.length : 0;
+        return (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 p-2">
+            <Card>
+              <CardContent className="pt-6 text-center">
+                <p className="text-xs text-muted-foreground">Total</p>
+                <p className="text-3xl font-bold" style={{ color: chartColors[0] }}>{total.toLocaleString()}</p>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardContent className="pt-6 text-center">
+                <p className="text-xs text-muted-foreground">Average</p>
+                <p className="text-3xl font-bold" style={{ color: chartColors[1] || chartColors[0] }}>{average.toFixed(2)}</p>
+              </CardContent>
+            </Card>
+          </div>
+        );
+      }
+
+      case 'table': {
+        const columns = Object.keys(normalizedData[0] || {});
+        return (
+          <div className="max-h-[320px] overflow-auto border rounded-md">
+            <table className="w-full text-sm">
+              <thead className="bg-muted sticky top-0">
+                <tr>
+                  {columns.map((column) => (
+                    <th key={column} className="text-left p-2 font-medium">{column}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {normalizedData.slice(0, 50).map((row, index) => (
+                  <tr key={index} className="border-t">
+                    {columns.map((column) => (
+                      <td key={`${index}-${column}`} className="p-2">{String(row[column] ?? '')}</td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        );
+      }
       
       default:
         return null;
@@ -596,6 +770,7 @@ const SortableChartCard = ({
   onDelete, 
   onCopy,
   onExport,
+  onDrill,
   gridLayout
 }: { 
   chart: ChartData; 
@@ -603,6 +778,7 @@ const SortableChartCard = ({
   onDelete: (id: string) => void; 
   onCopy: (chart: ChartData) => void;
   onExport: (chart: ChartData) => void;
+  onDrill: (chart: ChartData) => void;
   gridLayout: GridLayout;
 }) => {
   const {
@@ -772,6 +948,72 @@ const SortableChartCard = ({
             </ScatterChart>
           </ResponsiveContainer>
         );
+
+      case 'map': {
+        const latKey = Object.keys(normalizedData[0] || {}).find((key) => ['lat', 'latitude', 'y'].includes(key.toLowerCase())) || yKey;
+        const lngKey = Object.keys(normalizedData[0] || {}).find((key) => ['lng', 'lon', 'long', 'longitude', 'x'].includes(key.toLowerCase())) || xKey;
+        return (
+          <ResponsiveContainer width="100%" height={height}>
+            <ScatterChart margin={chartMargin}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+              <XAxis dataKey={lngKey} stroke="#6b7280" name="Longitude" />
+              <YAxis dataKey={latKey} stroke="#6b7280" name="Latitude" />
+              <Tooltip cursor={{ strokeDasharray: '3 3' }} contentStyle={{ backgroundColor: 'white', border: '1px solid #e5e7eb', borderRadius: '8px' }} />
+              <Scatter data={normalizedData} fill={chartColors[0]} />
+            </ScatterChart>
+          </ResponsiveContainer>
+        );
+      }
+
+      case 'card': {
+        const values = normalizedData
+          .map((row) => Number(row[chart.config.yKey || yKey]))
+          .filter((value) => Number.isFinite(value));
+        const total = values.reduce((sum, value) => sum + value, 0);
+        const average = values.length ? total / values.length : 0;
+        return (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <Card>
+              <CardContent className="pt-6 text-center">
+                <p className="text-xs text-muted-foreground">Total</p>
+                <p className="text-3xl font-bold" style={{ color: chartColors[0] }}>{total.toLocaleString()}</p>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardContent className="pt-6 text-center">
+                <p className="text-xs text-muted-foreground">Average</p>
+                <p className="text-3xl font-bold" style={{ color: chartColors[1] || chartColors[0] }}>{average.toFixed(2)}</p>
+              </CardContent>
+            </Card>
+          </div>
+        );
+      }
+
+      case 'table': {
+        const columns = Object.keys(normalizedData[0] || {});
+        return (
+          <div className="max-h-[420px] overflow-auto border rounded-md">
+            <table className="w-full text-sm">
+              <thead className="bg-muted sticky top-0">
+                <tr>
+                  {columns.map((column) => (
+                    <th key={column} className="text-left p-2 font-medium">{column}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {normalizedData.slice(0, 100).map((row, index) => (
+                  <tr key={index} className="border-t">
+                    {columns.map((column) => (
+                      <td key={`${index}-${column}`} className="p-2">{String(row[column] ?? '')}</td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        );
+      }
       
       default:
         return null;
@@ -835,6 +1077,10 @@ const SortableChartCard = ({
                 <DropdownMenuItem onClick={() => onExport(chart)}>
                   <ImageIcon className="mr-2 h-4 w-4" />
                   Export as Image
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => onDrill(chart)}>
+                  <Maximize2 className="mr-2 h-4 w-4" />
+                  Drill Through
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem 
@@ -932,6 +1178,14 @@ const CustomDashboard = () => {
   const [storageError, setStorageError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isSyncing, setIsSyncing] = useState(false);
+  const [slicerColumn, setSlicerColumn] = useState('');
+  const [slicerValue, setSlicerValue] = useState('');
+  const [bookmarkName, setBookmarkName] = useState('');
+  const [shareUrl, setShareUrl] = useState('');
+  const [drillChart, setDrillChart] = useState<ChartData | null>(null);
+  const [calculatedFields, setCalculatedFields] = useState<CalculatedField[]>([]);
+  const [calcName, setCalcName] = useState('');
+  const [calcExpression, setCalcExpression] = useState('');
 
   // Form states
   const [dashboardName, setDashboardName] = useState('');
@@ -972,11 +1226,19 @@ const CustomDashboard = () => {
       setIsLoading(true);
       const key = getStorageKey(user?.id);
       const stored = loadFromLocalStorage(key);
+      const sharedSlug = new URLSearchParams(window.location.search).get('share');
       
       if (stored && Array.isArray(stored)) {
-        setDashboards(stored);
-        if (stored.length > 0 && !currentDashboard) {
-          setCurrentDashboard(stored[0]);
+        const hydrated = stored.map((dashboard: Dashboard) => ({
+          ...dashboard,
+          bookmarks: dashboard.bookmarks || []
+        }));
+        setDashboards(hydrated);
+        if (hydrated.length > 0 && !currentDashboard) {
+          const sharedDashboard = sharedSlug
+            ? hydrated.find((dashboard: Dashboard) => dashboard.isPublished && dashboard.shareSlug === sharedSlug)
+            : null;
+          setCurrentDashboard(sharedDashboard || hydrated[0]);
         }
       } else {
         // Initialize with a default dashboard
@@ -986,6 +1248,8 @@ const CustomDashboard = () => {
           description: 'Welcome! Create your first chart to get started.',
           charts: [],
           layout: '2',
+          bookmarks: [],
+          isPublished: false,
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString()
         };
@@ -1080,6 +1344,8 @@ const CustomDashboard = () => {
       description: dashboardDescription.trim(),
       charts: [],
       layout: '2',
+      bookmarks: [],
+      isPublished: false,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString()
     };
@@ -1143,6 +1409,62 @@ const CustomDashboard = () => {
     setChartData('');
     setChartNotes('');
     setChartColors(COLORS);
+    setCalculatedFields([]);
+    setCalcName('');
+    setCalcExpression('');
+  };
+
+  const addCalculatedField = () => {
+    if (!calcName.trim() || !calcExpression.trim()) {
+      toast({
+        title: 'Missing field data',
+        description: 'Provide both a calculated field name and expression',
+        variant: 'destructive'
+      });
+      return;
+    }
+
+    const nextField: CalculatedField = {
+      name: calcName.trim(),
+      expression: calcExpression.trim()
+    };
+
+    setCalculatedFields((prev) => {
+      const withoutDuplicate = prev.filter((field) => field.name !== nextField.name);
+      return [...withoutDuplicate, nextField];
+    });
+    setCalcName('');
+    setCalcExpression('');
+  };
+
+  const removeCalculatedField = (fieldName: string) => {
+    setCalculatedFields((prev) => prev.filter((field) => field.name !== fieldName));
+  };
+
+  const handleCsvUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const csvText = String(e.target?.result || '');
+        const parsed = parseCsvText(csvText);
+        setChartData(JSON.stringify(parsed, null, 2));
+        toast({
+          title: 'CSV loaded',
+          description: `${parsed.length} rows imported from ${file.name}`
+        });
+      } catch (error) {
+        toast({
+          title: 'CSV import failed',
+          description: error instanceof Error ? error.message : 'Could not parse CSV file',
+          variant: 'destructive'
+        });
+      }
+    };
+    reader.readAsText(file);
+    event.target.value = '';
   };
 
   const addChart = () => {
@@ -1164,18 +1486,20 @@ const CustomDashboard = () => {
       return;
     }
 
-    const { xKey, yKey } = detectDataKeys(dataValidation.parsed!);
+    const calculatedData = applyCalculatedFields(dataValidation.parsed!, calculatedFields);
+    const { xKey, yKey } = detectDataKeys(calculatedData);
 
     const newChart: ChartData = {
       id: editingChart?.id || crypto.randomUUID(),
       title: chartTitle.trim(),
       type: chartType,
       size: chartSize,
-      data: dataValidation.parsed!,
+      data: calculatedData,
       config: {
         xKey,
         yKey,
-        colors: chartColors
+        colors: chartColors,
+        calculatedFields: [...calculatedFields]
       },
       notes: chartNotes.trim(),
       createdAt: editingChart?.createdAt || new Date().toISOString(),
@@ -1219,7 +1543,68 @@ const CustomDashboard = () => {
     setChartData(JSON.stringify(chart.data, null, 2));
     setChartNotes(chart.notes || '');
     setChartColors(chart.config.colors || COLORS);
+    setCalculatedFields(chart.config.calculatedFields || []);
     setIsAddChartDialogOpen(true);
+  };
+
+  const createBookmark = () => {
+    if (!currentDashboard || !bookmarkName.trim()) return;
+    const nextBookmark: DashboardBookmark = {
+      id: crypto.randomUUID(),
+      name: bookmarkName.trim(),
+      layout: currentDashboard.layout,
+      searchQuery,
+      slicerColumn,
+      slicerValue,
+      createdAt: new Date().toISOString()
+    };
+
+    const updatedDashboard = {
+      ...currentDashboard,
+      bookmarks: [...(currentDashboard.bookmarks || []), nextBookmark],
+      updatedAt: new Date().toISOString()
+    };
+
+    setCurrentDashboard(updatedDashboard);
+    setBookmarkName('');
+    addActivity('Created bookmark', nextBookmark.name);
+  };
+
+  const applyBookmark = (bookmark: DashboardBookmark) => {
+    if (!currentDashboard) return;
+    setSearchQuery(bookmark.searchQuery);
+    setSlicerColumn(bookmark.slicerColumn);
+    setSlicerValue(bookmark.slicerValue);
+    updateDashboardLayout(bookmark.layout);
+    addActivity('Applied bookmark', bookmark.name);
+  };
+
+  const publishDashboard = async () => {
+    if (!currentDashboard) return;
+    const shareSlug = currentDashboard.shareSlug || crypto.randomUUID().slice(0, 8);
+    const updatedDashboard: Dashboard = {
+      ...currentDashboard,
+      isPublished: true,
+      shareSlug,
+      updatedAt: new Date().toISOString()
+    };
+    setCurrentDashboard(updatedDashboard);
+
+    const url = `${window.location.origin}/custom-dashboard?share=${shareSlug}`;
+    setShareUrl(url);
+    try {
+      await navigator.clipboard.writeText(url);
+      toast({
+        title: 'Dashboard published',
+        description: 'Share link copied to clipboard'
+      });
+    } catch {
+      toast({
+        title: 'Dashboard published',
+        description: 'Share link generated. Copy it from the input box.'
+      });
+    }
+    addActivity('Published dashboard', currentDashboard.name);
   };
 
   const deleteChart = (chartId: string) => {
@@ -1400,17 +1785,49 @@ const CustomDashboard = () => {
   };
 
   // ==================== FILTERED CHARTS ====================
+  const slicerColumns = useMemo(() => {
+    if (!currentDashboard?.charts.length) return [];
+    const columns = new Set<string>();
+    currentDashboard.charts.forEach((chart) => {
+      const sample = chart.data?.[0];
+      if (sample && typeof sample === 'object') {
+        Object.keys(sample).forEach((key) => columns.add(key));
+      }
+    });
+    return Array.from(columns);
+  }, [currentDashboard]);
+
+  const slicerValues = useMemo(() => {
+    if (!currentDashboard || !slicerColumn) return [];
+    const values = new Set<string>();
+    currentDashboard.charts.forEach((chart) => {
+      chart.data?.forEach((row) => {
+        if (row && row[slicerColumn] !== undefined && row[slicerColumn] !== null) {
+          values.add(String(row[slicerColumn]));
+        }
+      });
+    });
+    return Array.from(values).slice(0, 200);
+  }, [currentDashboard, slicerColumn]);
+
   const filteredCharts = useMemo(() => {
     if (!currentDashboard) return [];
-    if (!searchQuery.trim()) return currentDashboard.charts;
-    
-    const query = searchQuery.toLowerCase();
-    return currentDashboard.charts.filter(chart =>
-      chart.title.toLowerCase().includes(query) ||
-      chart.type.toLowerCase().includes(query) ||
-      chart.notes?.toLowerCase().includes(query)
-    );
-  }, [currentDashboard, searchQuery]);
+    const query = searchQuery.trim().toLowerCase();
+
+    return currentDashboard.charts
+      .filter((chart) => {
+        if (!query) return true;
+        return (
+          chart.title.toLowerCase().includes(query) ||
+          chart.type.toLowerCase().includes(query) ||
+          chart.notes?.toLowerCase().includes(query)
+        );
+      })
+      .map((chart) => ({
+        ...chart,
+        data: applySlicer(chart.data || [], slicerColumn, slicerValue)
+      }));
+  }, [currentDashboard, searchQuery, slicerColumn, slicerValue]);
 
   // ==================== RENDER ====================
   if (isLoading) {
@@ -1499,12 +1916,45 @@ const CustomDashboard = () => {
             </DropdownMenuContent>
           </DropdownMenu>
 
-          <Button onClick={() => setIsAddChartDialogOpen(true)} className="bg-blue-600 hover:bg-blue-700">
+          <Button onClick={() => {
+            setEditingChart(null);
+            resetChartForm();
+            setIsAddChartDialogOpen(true);
+          }} className="bg-blue-600 hover:bg-blue-700">
             <Plus className="mr-2 h-4 w-4" />
             Add Chart
           </Button>
+
+          <Button variant="outline" onClick={publishDashboard}>
+            <Upload className="mr-2 h-4 w-4" />
+            Publish & Share
+          </Button>
         </div>
       </div>
+
+      {shareUrl && (
+        <Card>
+          <CardContent className="p-4">
+            <div className="flex flex-col md:flex-row md:items-center gap-3">
+              <Label className="min-w-fit">Share URL</Label>
+              <Input value={shareUrl} readOnly className="font-mono text-xs" />
+              <Button
+                variant="outline"
+                onClick={async () => {
+                  try {
+                    await navigator.clipboard.writeText(shareUrl);
+                    toast({ title: 'Copied', description: 'Share URL copied to clipboard' });
+                  } catch {
+                    toast({ title: 'Copy failed', description: 'Please copy URL manually', variant: 'destructive' });
+                  }
+                }}
+              >
+                Copy Link
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Dashboard Stats */}
       <DashboardStats dashboard={currentDashboard} />
@@ -1526,6 +1976,42 @@ const CustomDashboard = () => {
             </div>
 
             <div className="flex items-center gap-2">
+              <Select value={slicerColumn || '__none__'} onValueChange={(value) => {
+                if (value === '__none__') {
+                  setSlicerColumn('');
+                  setSlicerValue('');
+                  return;
+                }
+                setSlicerColumn(value);
+                setSlicerValue('');
+              }}>
+                <SelectTrigger className="w-[180px]">
+                  <SelectValue placeholder="Slicer column" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__none__">No slicer</SelectItem>
+                  {slicerColumns.map((column) => (
+                    <SelectItem key={column} value={column}>{column}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+
+              <Select
+                value={slicerValue || '__all__'}
+                onValueChange={(value) => setSlicerValue(value === '__all__' ? '' : value)}
+                disabled={!slicerColumn}
+              >
+                <SelectTrigger className="w-[180px]">
+                  <SelectValue placeholder="Slicer value" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__all__">All values</SelectItem>
+                  {slicerValues.map((value) => (
+                    <SelectItem key={value} value={value}>{value}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <Button variant="outline" size="sm">
@@ -1565,6 +2051,30 @@ const CustomDashboard = () => {
               </Button>
             </div>
           </div>
+
+          <div className="mt-4 flex flex-col md:flex-row gap-2 md:items-center">
+            <Input
+              placeholder="Bookmark name"
+              value={bookmarkName}
+              onChange={(e) => setBookmarkName(e.target.value)}
+              className="md:max-w-xs"
+            />
+            <Button variant="outline" size="sm" onClick={createBookmark} disabled={!bookmarkName.trim()}>
+              Save Bookmark
+            </Button>
+            <div className="flex flex-wrap gap-2">
+              {(currentDashboard.bookmarks || []).slice(-6).map((bookmark) => (
+                <Button
+                  key={bookmark.id}
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => applyBookmark(bookmark)}
+                >
+                  {bookmark.name}
+                </Button>
+              ))}
+            </div>
+          </div>
         </CardContent>
       </Card>
 
@@ -1578,7 +2088,11 @@ const CustomDashboard = () => {
               {searchQuery ? 'No charts match your search' : 'Start by creating your first chart'}
             </p>
             {!searchQuery && (
-              <Button onClick={() => setIsAddChartDialogOpen(true)}>
+              <Button onClick={() => {
+                setEditingChart(null);
+                resetChartForm();
+                setIsAddChartDialogOpen(true);
+              }}>
                 <Plus className="mr-2 h-4 w-4" />
                 Create Chart
               </Button>
@@ -1601,6 +2115,7 @@ const CustomDashboard = () => {
                   onDelete={setDeleteChartId}
                   onCopy={copyChart}
                   onExport={exportChartAsImage}
+                  onDrill={setDrillChart}
                   gridLayout={currentDashboard.layout}
                 />
               ))}
@@ -1742,6 +2257,24 @@ const CustomDashboard = () => {
                           Scatter Chart
                         </div>
                       </SelectItem>
+                      <SelectItem value="map">
+                        <div className="flex items-center gap-2">
+                          <Activity className="h-4 w-4" />
+                          Map Plot
+                        </div>
+                      </SelectItem>
+                      <SelectItem value="card">
+                        <div className="flex items-center gap-2">
+                          <Layout className="h-4 w-4" />
+                          KPI Card
+                        </div>
+                      </SelectItem>
+                      <SelectItem value="table">
+                        <div className="flex items-center gap-2">
+                          <Grid3x3 className="h-4 w-4" />
+                          Table
+                        </div>
+                      </SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
@@ -1777,25 +2310,39 @@ const CustomDashboard = () => {
               <div>
                 <div className="flex items-center justify-between mb-2">
                   <Label htmlFor="chart-data">Chart Data (JSON) *</Label>
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                      <Button variant="outline" size="sm">
-                        <FileJson className="mr-2 h-4 w-4" />
-                        Use Template
-                      </Button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent>
-                      <DropdownMenuItem onClick={() => loadDataTemplate('sales')}>
-                        Sales Data
-                      </DropdownMenuItem>
-                      <DropdownMenuItem onClick={() => loadDataTemplate('users')}>
-                        User Categories
-                      </DropdownMenuItem>
-                      <DropdownMenuItem onClick={() => loadDataTemplate('performance')}>
-                        Performance Metrics
-                      </DropdownMenuItem>
-                    </DropdownMenuContent>
-                  </DropdownMenu>
+                  <div className="flex items-center gap-2">
+                    <Button variant="outline" size="sm" asChild>
+                      <label className="cursor-pointer">
+                        <Upload className="mr-2 h-4 w-4" />
+                        Upload CSV
+                        <input
+                          type="file"
+                          accept=".csv,text/csv"
+                          onChange={handleCsvUpload}
+                          className="hidden"
+                        />
+                      </label>
+                    </Button>
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button variant="outline" size="sm">
+                          <FileJson className="mr-2 h-4 w-4" />
+                          Use Template
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent>
+                        <DropdownMenuItem onClick={() => loadDataTemplate('sales')}>
+                          Sales Data
+                        </DropdownMenuItem>
+                        <DropdownMenuItem onClick={() => loadDataTemplate('users')}>
+                          User Categories
+                        </DropdownMenuItem>
+                        <DropdownMenuItem onClick={() => loadDataTemplate('performance')}>
+                          Performance Metrics
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  </div>
                 </div>
                 <textarea
                   id="chart-data"
@@ -1822,6 +2369,43 @@ const CustomDashboard = () => {
                 <p className="text-xs text-muted-foreground mt-2">
                   Paste a JSON array. Keys will be auto-detected. Max 1000 data points.
                 </p>
+              </div>
+
+              <div className="rounded-lg border p-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <Label>Basic Calculated Fields</Label>
+                  <Badge variant="outline">Formula: revenue - expenses</Badge>
+                </div>
+                <div className="grid md:grid-cols-3 gap-2">
+                  <Input
+                    placeholder="Field name (e.g. profit)"
+                    value={calcName}
+                    onChange={(e) => setCalcName(e.target.value)}
+                  />
+                  <Input
+                    placeholder="Expression (e.g. revenue - expenses)"
+                    value={calcExpression}
+                    onChange={(e) => setCalcExpression(e.target.value)}
+                  />
+                  <Button type="button" variant="outline" onClick={addCalculatedField}>
+                    Add Field
+                  </Button>
+                </div>
+                {!!calculatedFields.length && (
+                  <div className="flex flex-wrap gap-2">
+                    {calculatedFields.map((field) => (
+                      <Button
+                        key={field.name}
+                        type="button"
+                        variant="secondary"
+                        size="sm"
+                        onClick={() => removeCalculatedField(field.name)}
+                      >
+                        {field.name}: {field.expression}
+                      </Button>
+                    ))}
+                  </div>
+                )}
               </div>
 
               {dataValidation.valid && dataValidation.parsed && (
@@ -1859,6 +2443,47 @@ const CustomDashboard = () => {
               {editingChart ? 'Update Chart' : 'Add Chart'}
             </Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!drillChart} onOpenChange={(open) => !open && setDrillChart(null)}>
+        <DialogContent className="max-w-5xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Drill Through: {drillChart?.title}</DialogTitle>
+            <DialogDescription>
+              Detailed view with rich tooltip context and underlying rows.
+            </DialogDescription>
+          </DialogHeader>
+          {drillChart && (
+            <div className="space-y-4">
+              <ChartPreview
+                chartType={drillChart.type}
+                chartData={drillChart.data}
+                chartColors={drillChart.config.colors || COLORS}
+                size={drillChart.size || 'large'}
+              />
+              <div className="max-h-[340px] overflow-auto border rounded-md">
+                <table className="w-full text-sm">
+                  <thead className="bg-muted sticky top-0">
+                    <tr>
+                      {Object.keys(drillChart.data[0] || {}).map((key) => (
+                        <th key={key} className="text-left p-2">{key}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {drillChart.data.map((row, index) => (
+                      <tr key={index} className="border-t">
+                        {Object.keys(drillChart.data[0] || {}).map((key) => (
+                          <td key={`${index}-${key}`} className="p-2">{String(row[key] ?? '')}</td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
         </DialogContent>
       </Dialog>
 
