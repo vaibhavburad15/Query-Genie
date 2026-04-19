@@ -65,20 +65,21 @@ if not EMAIL_HOST_USER or not EMAIL_HOST_PASSWORD:
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
-SQLITE_DB_FILE = "users.db"
+BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
+SQLITE_DB_FILE = os.path.join(BACKEND_DIR, "users.db")
 engine = create_engine(
     f"sqlite:///{SQLITE_DB_FILE}", 
     echo=False,
-    pool_pre_ping=True,              # ✅ Test connections before using
-    pool_recycle=3600,               # ✅ Recycle connections every hour
-    pool_size=10,                    # ✅ INCREASED: Increased from 5
-    max_overflow=20,                 # ✅ INCREASED: Increased from 10
+    pool_pre_ping=True,              
+    pool_recycle=3600,               
+    pool_size=10,                    
+    max_overflow=20,                 
     connect_args={
-        "timeout": 30,               # ✅ NEW: Connection timeout
-        "check_same_thread": False   # ✅ For SQLite multi-threading
+        "timeout": 30,               
+        "check_same_thread": False   
     },
     execution_options={
-        "sqlite_synchronous": 0,     # ✅ Performance: Use async writes
+        "sqlite_synchronous": 0,     
     }
 )
 
