@@ -1,7 +1,7 @@
 // src/contexts/AuthContext.tsx
 import { createContext, useContext, useState, ReactNode, useEffect } from 'react';
-import { login as apiLogin, signup as apiSignup, sendOtp as apiSendOtp } from '@/services/api';
-import { clearDbSessionToken } from '@/services/apiClient';
+import { login as apiLogin, signup as apiSignup, sendOtp as apiSendOtp, logout as apiLogout } from '@/services/api';
+import { clearAuthToken, clearDbSessionToken, storeAuthToken } from '@/services/apiClient';
 
 interface User {
   id: number;
@@ -53,14 +53,20 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   useEffect(() => {
     const storedUser = localStorage.getItem('user');
     const storedAuth = localStorage.getItem('isAuthenticated');
-    if (storedUser && storedAuth === 'true') {
+    const storedToken = localStorage.getItem('auth_token');
+    if (storedUser && storedAuth === 'true' && storedToken) {
       try {
         setUser(JSON.parse(storedUser));
         setIsAuthenticated(true);
       } catch {
         localStorage.removeItem('user');
         localStorage.removeItem('isAuthenticated');
+        clearAuthToken();
       }
+    } else if (storedUser || storedAuth === 'true') {
+      localStorage.removeItem('user');
+      localStorage.removeItem('isAuthenticated');
+      clearAuthToken();
     }
   }, []);
 
@@ -68,13 +74,14 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     setIsLoading(true);
     try {
       const response = await apiLogin(credentials);
-      if (response.success && response.user) {
+      if (response.success && response.user && response.auth_token) {
         const userData: User = response.user;
         setUser(userData);
         setIsAuthenticated(true);
         setJustLoggedIn(true);
         localStorage.setItem('user', JSON.stringify(userData));
         localStorage.setItem('isAuthenticated', 'true');
+        storeAuthToken(response.auth_token);
         return true;
       }
       return false;
@@ -100,7 +107,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       const response = await apiSignup(userData);
 
       // Backend now returns the user object on successful signup
-      if (response.success && response.user) {
+      if (response.success && response.user && response.auth_token) {
         const newUser: User = {
           id: response.user.id,
           email: response.user.email,
@@ -115,6 +122,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         setJustLoggedIn(true);
         localStorage.setItem('user', JSON.stringify(newUser));
         localStorage.setItem('isAuthenticated', 'true');
+        storeAuthToken(response.auth_token);
         return true;
       }
       return false;
@@ -139,11 +147,13 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const resetJustLoggedIn = () => setJustLoggedIn(false);
 
   const logout = () => {
+    void apiLogout().catch(() => undefined);
     setUser(null);
     setIsAuthenticated(false);
     setJustLoggedIn(false);
     localStorage.removeItem('user');
     localStorage.removeItem('isAuthenticated');
+    clearAuthToken();
     // Clear the per-user DB session token so it isn't reused after logout
     clearDbSessionToken();
   };

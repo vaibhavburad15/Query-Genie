@@ -2,11 +2,12 @@
 from datetime import datetime, timedelta, timezone
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Depends, Path, Request, Header
+from fastapi.concurrency import run_in_threadpool
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 from slowapi.middleware import SlowAPIMiddleware
 from email_validator import validate_email, EmailNotValidError
-from pydantic import BaseModel, EmailStr, SecretStr
+from pydantic import BaseModel, EmailStr, SecretStr, Field
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Mapped, Session, mapped_column
 import random
@@ -19,7 +20,7 @@ from langchain_core.runnables import RunnablePassthrough
 from langchain_core.output_parsers import StrOutputParser
 from langchain_community.utilities import SQLDatabase
 from langchain_groq import ChatGroq
-from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime, ForeignKey, text
+from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime, ForeignKey, text, or_
 from sqlalchemy.orm import declarative_base
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.exc import SQLAlchemyError
@@ -88,21 +89,21 @@ engine = create_engine(
 
 class User(Base):
     __tablename__ = "users"
-    id = Column(Integer, primary_key=True, index=True)
-    email = Column(String, unique=True, index=True, nullable=False)
-    firstName = Column(String, nullable=False)
-    lastName = Column(String, nullable=False)
-    gender = Column(String, nullable=False)
-    username = Column(String, nullable=False)
-    hashed_password = Column(String, nullable=False)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    email: Mapped[str] = mapped_column(String, unique=True, index=True, nullable=False)
+    firstName: Mapped[str] = mapped_column(String, nullable=False)
+    lastName: Mapped[str] = mapped_column(String, nullable=False)
+    gender: Mapped[str] = mapped_column(String, nullable=False)
+    username: Mapped[str] = mapped_column(String, nullable=False)
+    hashed_password: Mapped[str] = mapped_column(String, nullable=False)
 
 
 class ChatSession(Base):
     __tablename__ = "chat_sessions"
-    id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey('users.id'), nullable=False)
-    title = Column(String, nullable=False)
-    messages = Column(Text, nullable=False)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey('users.id'), nullable=False)
+    title: Mapped[str] = mapped_column(String, nullable=False)
+    messages: Mapped[str] = mapped_column(Text, nullable=False)
 
 
 class UserDashboard(Base):
@@ -117,6 +118,36 @@ class UserDashboard(Base):
     updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime, default=datetime.utcnow)
 
 
+class AuthSession(Base):
+    __tablename__ = "auth_sessions"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey('users.id'), nullable=False, index=True)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+
+class DatabaseSession(Base):
+    __tablename__ = "database_sessions"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey('users.id'), nullable=False, index=True)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True, nullable=False)
+    db_uri: Mapped[str] = mapped_column(Text, nullable=False)
+    db_name: Mapped[str] = mapped_column(String, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+
+class OtpCode(Base):
+    __tablename__ = "otp_codes"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    email: Mapped[str] = mapped_column(String, unique=True, index=True, nullable=False)
+    otp_hash: Mapped[str] = mapped_column(String, nullable=False)
+    attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+
 Base.metadata.create_all(engine)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
@@ -129,59 +160,59 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 # ─────────────────────────────────────────────
 
 class DbSessionStore:
-    """Thread-safe, per-user database connection store."""
+    """Database-backed, per-user database connection store."""
 
     def __init__(self, ttl_seconds: int = 3600):
-        self._store: Dict[str, Dict[str, Any]] = {}
-        self._lock = threading.Lock()
         self._ttl = ttl_seconds
 
-    def create(self, db_uri: str, db_name: str) -> str:
+    def _cleanup_expired(self, db: Session) -> None:
+        db.query(DatabaseSession).filter(DatabaseSession.expires_at <= datetime.utcnow()).delete()
+        db.flush()
+
+    def create(self, user_id: int, db_uri: str, db_name: str, db: Session) -> str:
         """Store a new connection and return an opaque session token."""
         token = secrets.token_urlsafe(32)
-        with self._lock:
-            self._store[token] = {
-                "db_uri": db_uri,
-                "db_name": db_name,
-                "created_at": time.time(),
-            }
-        # Auto-expire after TTL
-        t = threading.Thread(target=self._expire, args=(token,), daemon=True)
-        t.start()
+        self._cleanup_expired(db)
+        db.query(DatabaseSession).filter(DatabaseSession.user_id == user_id).delete()
+        db.add(
+            DatabaseSession(
+                user_id=user_id,
+                token_hash=hash_token(token),
+                db_uri=db_uri,
+                db_name=db_name,
+                expires_at=datetime.utcnow() + timedelta(seconds=self._ttl),
+            )
+        )
+        db.commit()
         return token
 
-    def get(self, token: str) -> Optional[Dict[str, Any]]:
+    def get(self, token: str, db: Session, user_id: Optional[int] = None) -> Optional[Dict[str, Any]]:
         """Return the session dict or None if missing / expired."""
-        with self._lock:
-            session = self._store.get(token)
-            if session is None:
-                return None
-            if time.time() - session["created_at"] > self._ttl:
-                del self._store[token]
-                return None
-            return session
+        query = db.query(DatabaseSession).filter(
+            DatabaseSession.token_hash == hash_token(token),
+            DatabaseSession.expires_at > datetime.utcnow(),
+        )
+        if user_id is not None:
+            query = query.filter(DatabaseSession.user_id == user_id)
+        session = query.first()
+        if session is None:
+            return None
+        return {
+            "db_uri": session.db_uri,
+            "db_name": session.db_name,
+            "session_id": session.id,
+            "user_id": session.user_id,
+        }
 
-    def delete(self, token: str) -> None:
-        with self._lock:
-            self._store.pop(token, None)
-
-    def _expire(self, token: str) -> None:
-        time.sleep(self._ttl)
-        with self._lock:
-            self._store.pop(token, None)
+    def delete(self, token: str, db: Session, user_id: Optional[int] = None) -> None:
+        query = db.query(DatabaseSession).filter(DatabaseSession.token_hash == hash_token(token))
+        if user_id is not None:
+            query = query.filter(DatabaseSession.user_id == user_id)
+        query.delete()
+        db.commit()
 
 
 db_session_store = DbSessionStore(ttl_seconds=int(os.getenv("DB_SESSION_TTL", "3600")))
-
-
-def get_db_session(x_db_session: Optional[str] = Header(default=None)) -> Dict[str, Any]:
-    """FastAPI dependency – resolves the per-user DB session from the header."""
-    if not x_db_session:
-        raise HTTPException(status_code=400, detail="X-DB-Session header is required. Connect to a database first.")
-    session = db_session_store.get(x_db_session)
-    if session is None:
-        raise HTTPException(status_code=401, detail="Database session expired or not found. Please reconnect.")
-    return session
 
 
 # ─────────────────────────────────────────────
@@ -259,45 +290,48 @@ app.add_middleware(SlowAPIMiddleware)
 # OTP MANAGER
 # ─────────────────────────────────────────────
 class OtpManager:
-    """Thread-safe OTP manager with auto-cleanup."""
+    """Database-backed OTP manager."""
 
-    def __init__(self):
-        self.storage: Dict[str, Any] = {}
-        self.lock = threading.Lock()
+    def _cleanup_expired(self, db: Session) -> None:
+        db.query(OtpCode).filter(OtpCode.expires_at <= datetime.utcnow()).delete()
+        db.flush()
 
-    def store(self, email: str, otp: str, expiry_minutes: int = 5):
-        with self.lock:
-            expires_at = datetime.now(timezone.utc) + timedelta(minutes=expiry_minutes)
-            self.storage[email] = {
-                "otp": otp,
-                "expires_at": expires_at,
-                "attempts": 0,
-            }
-        # Auto-expire
-        t = threading.Thread(target=self._cleanup, args=(email, expiry_minutes * 60), daemon=True)
-        t.start()
+    def store(self, email: str, otp: str, db: Session, expiry_minutes: int = 5) -> None:
+        self._cleanup_expired(db)
+        existing = db.query(OtpCode).filter(OtpCode.email == email).first()
+        if existing:
+            db.delete(existing)
+            db.flush()
+        db.add(
+            OtpCode(
+                email=email,
+                otp_hash=get_password_hash(otp),
+                attempts=0,
+                expires_at=datetime.utcnow() + timedelta(minutes=expiry_minutes),
+            )
+        )
+        db.commit()
 
-    def verify(self, email: str, otp: str) -> Tuple[bool, str]:
-        with self.lock:
-            data = self.storage.get(email)
-            if not data:
-                return False, "OTP not requested or already used"
-            if datetime.now(timezone.utc) > data["expires_at"]:
-                del self.storage[email]
-                return False, "OTP has expired"
-            if data["attempts"] >= 5:
-                del self.storage[email]
-                return False, "Too many failed attempts. Request a new OTP."
-            if data["otp"] != otp:
-                data["attempts"] += 1
-                return False, "Invalid OTP"
-            del self.storage[email]
-            return True, "OTP verified"
-
-    def _cleanup(self, email: str, delay: int):
-        time.sleep(delay)
-        with self.lock:
-            self.storage.pop(email, None)
+    def verify(self, email: str, otp: str, db: Session) -> Tuple[bool, str]:
+        self._cleanup_expired(db)
+        otp_record = db.query(OtpCode).filter(OtpCode.email == email).first()
+        if otp_record is None:
+            return False, "OTP not requested or already used"
+        if otp_record.expires_at <= datetime.utcnow():
+            db.delete(otp_record)
+            db.commit()
+            return False, "OTP has expired"
+        if otp_record.attempts >= 5:
+            db.delete(otp_record)
+            db.commit()
+            return False, "Too many failed attempts. Request a new OTP."
+        if not verify_password(otp, otp_record.otp_hash):
+            otp_record.attempts += 1
+            db.commit()
+            return False, "Invalid OTP"
+        db.delete(otp_record)
+        db.commit()
+        return True, "OTP verified"
 
 
 otp_manager = OtpManager()
@@ -330,7 +364,7 @@ class CreateDatabaseRequest(BaseModel):
 
 class ChatRequest(BaseModel):
     question: str
-    chat_history: list = []
+    chat_history: list = Field(default_factory=list)
 
 
 class UserCreate(BaseModel):
@@ -353,11 +387,33 @@ class OtpRequest(BaseModel):
 
 
 class FavoriteQueryCreate(BaseModel):
-    user_id: int
+    user_id: Optional[int] = None
     question: str
     sql_query: str
     tags: Optional[str] = None
     description: Optional[str] = None
+
+
+class ChatSessionCreateRequest(BaseModel):
+    title: str = "Untitled Chat"
+    messages: List[Dict[str, Any]] = Field(default_factory=list)
+    user_id: Optional[int] = None
+
+
+class ChatSessionUpdateRequest(BaseModel):
+    title: Optional[str] = None
+    messages: Optional[List[Dict[str, Any]]] = None
+    user_id: Optional[int] = None
+
+
+class QueryHistoryTrackRequest(BaseModel):
+    user_id: Optional[int] = None
+    session_id: Optional[int] = None
+    question: str
+    sql_query: str
+    success: bool = True
+    execution_time_ms: Optional[int] = None
+    row_count: Optional[int] = None
 
 
 class UserSettingsUpdate(BaseModel):
@@ -405,7 +461,7 @@ class Dashboard(BaseModel):
 
 
 class DashboardCreate(BaseModel):
-    user_id: int
+    user_id: Optional[int] = None
     dashboard_id: str
     name: str
     description: Optional[str] = ""
@@ -419,7 +475,7 @@ class DashboardUpdate(BaseModel):
 
 
 class DashboardMigrate(BaseModel):
-    user_id: int
+    user_id: Optional[int] = None
     dashboards_data: List[Dict[str, Any]]
 
 
@@ -432,6 +488,111 @@ def get_db():
         yield db
     finally:
         db.close()
+
+
+AUTH_SESSION_TTL_SECONDS = int(os.getenv("AUTH_SESSION_TTL", "604800"))
+READ_ONLY_SQL_PREFIXES = ("SELECT", "WITH", "SHOW", "DESCRIBE", "DESC", "EXPLAIN")
+
+
+def hash_token(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def create_auth_token(user_id: int, db: Session) -> str:
+    token = secrets.token_urlsafe(32)
+    db.query(AuthSession).filter(AuthSession.expires_at <= datetime.utcnow()).delete()
+    db.add(
+        AuthSession(
+            user_id=user_id,
+            token_hash=hash_token(token),
+            expires_at=datetime.utcnow() + timedelta(seconds=AUTH_SESSION_TTL_SECONDS),
+        )
+    )
+    db.commit()
+    return token
+
+
+def extract_bearer_token(authorization: Optional[str]) -> str:
+    if not authorization:
+        raise HTTPException(status_code=401, detail="Authorization header is required")
+    scheme, _, token = authorization.partition(" ")
+    if scheme.lower() != "bearer" or not token:
+        raise HTTPException(status_code=401, detail="Invalid authorization header")
+    return token
+
+
+def get_current_user(
+    authorization: Optional[str] = Header(default=None),
+    db: Session = Depends(get_db),
+) -> User:
+    token = extract_bearer_token(authorization)
+    token_hash = hash_token(token)
+    auth_session = db.query(AuthSession).filter(AuthSession.token_hash == token_hash).first()
+    if auth_session is None:
+        raise HTTPException(status_code=401, detail="Invalid or expired session")
+    if auth_session.expires_at <= datetime.utcnow():
+        db.delete(auth_session)
+        db.commit()
+        raise HTTPException(status_code=401, detail="Session expired. Please log in again.")
+    user = db.query(User).filter(User.id == auth_session.user_id).first()
+    if user is None:
+        db.delete(auth_session)
+        db.commit()
+        raise HTTPException(status_code=401, detail="User not found for this session")
+    return user
+
+
+def revoke_auth_token(token: str, db: Session) -> None:
+    db.query(AuthSession).filter(AuthSession.token_hash == hash_token(token)).delete()
+    db.commit()
+
+
+def assert_user_access(requested_user_id: Optional[int], current_user: User) -> None:
+    if requested_user_id is not None and requested_user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="You are not authorized to access another user's data")
+
+
+def get_db_session(
+    x_db_session: Optional[str] = Header(default=None),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> Dict[str, Any]:
+    """FastAPI dependency – resolves the per-user DB session from the header."""
+    if not x_db_session:
+        raise HTTPException(status_code=400, detail="X-DB-Session header is required. Connect to a database first.")
+    session = db_session_store.get(x_db_session, db, current_user.id)
+    if session is None:
+        raise HTTPException(status_code=401, detail="Database session expired or not found. Please reconnect.")
+    return session
+
+
+class EngineCache:
+    def __init__(self):
+        self._engines: Dict[str, Any] = {}
+        self._lock = threading.Lock()
+
+    def get(self, db_uri: str):
+        with self._lock:
+            engine = self._engines.get(db_uri)
+            if engine is None:
+                engine = create_engine(
+                    db_uri,
+                    pool_pre_ping=True,
+                    pool_recycle=3600,
+                    pool_size=10,
+                    max_overflow=20,
+                )
+                self._engines[db_uri] = engine
+            return engine
+
+    def dispose_all(self) -> None:
+        with self._lock:
+            for engine in self._engines.values():
+                engine.dispose()
+            self._engines.clear()
+
+
+engine_cache = EngineCache()
 
 
 def generate_otp():
@@ -472,12 +633,29 @@ def send_otp_email(recipient_email: str, otp: str):
         raise HTTPException(status_code=500, detail="Failed to send OTP email.")
 
 
-DANGEROUS_KEYWORDS = ["DROP", "TRUNCATE", "DELETE", "ALTER", "UPDATE"]
+DANGEROUS_KEYWORDS = [
+    "DROP",
+    "TRUNCATE",
+    "DELETE",
+    "ALTER",
+    "UPDATE",
+    "INSERT",
+    "CREATE",
+    "REPLACE",
+    "MERGE",
+    "RENAME",
+    "GRANT",
+    "REVOKE",
+]
 
 
 def detect_dangerous_sql(sql: str):
     sql_upper = sql.upper()
     return [kw for kw in DANGEROUS_KEYWORDS if kw in sql_upper]
+
+
+def is_read_only_sql(sql: str) -> bool:
+    return sql.upper().strip().startswith(READ_ONLY_SQL_PREFIXES)
 
 
 def sql_to_table_preview(sql: str):
@@ -522,15 +700,36 @@ def get_password_hash(password):
 
 
 def get_user(identifier: str, db):
-    return db.query(User).filter(User.email == identifier).first()
+    return db.query(User).filter(
+        or_(User.email == identifier, User.username == identifier)
+    ).first()
 
 
 def format_chat_history(chat_history: list) -> str:
     if not chat_history:
         return "No previous conversation history."
-    recent_history = chat_history[-5:] if len(chat_history) > 5 else chat_history
+    recent_history = chat_history[-10:] if len(chat_history) > 10 else chat_history
+    normalized_history = []
+
+    if recent_history and isinstance(recent_history[0], dict) and "role" in recent_history[0]:
+        pending_user = ""
+        for item in recent_history:
+            role = item.get("role")
+            content = item.get("content", "")
+            if role == "user":
+                if pending_user:
+                    normalized_history.append({"user": pending_user, "assistant": ""})
+                pending_user = content
+            elif role in {"assistant", "ai"}:
+                normalized_history.append({"user": pending_user, "assistant": content})
+                pending_user = ""
+        if pending_user:
+            normalized_history.append({"user": pending_user, "assistant": ""})
+    else:
+        normalized_history = recent_history[-5:]
+
     formatted = []
-    for idx, item in enumerate(recent_history, 1):
+    for idx, item in enumerate(normalized_history[-5:], 1):
         user_msg = item.get('user', '')
         assistant_msg = item.get('assistant', '')
         sql_match = re.search(r'SQL: `([^`]+)`', assistant_msg)
@@ -556,8 +755,8 @@ def format_chat_history(chat_history: list) -> str:
 # ─────────────────────────────────────────────
 # LLM CHAIN
 # ─────────────────────────────────────────────
-def get_sql_chain(db, chat_history: list = []):
-    history_context = format_chat_history(chat_history)
+def get_sql_chain(db, chat_history: Optional[list] = None):
+    history_context = format_chat_history(chat_history or [])
 
     user_template = """Database Schema:
 {schema}
@@ -599,9 +798,9 @@ Instructions:
     )
 
 
-def get_response(question: str, db, db_name: str, chat_history: list = []):
+def get_response(question: str, db, db_name: str, chat_history: Optional[list] = None):
     """Generate SQL via LLM, execute it, return structured response string."""
-    chain = get_sql_chain(db, chat_history)
+    chain = get_sql_chain(db, chat_history or [])
     connection = None
     sql_query = "N/A"
 
@@ -625,17 +824,15 @@ def get_response(question: str, db, db_name: str, chat_history: list = []):
                 "sql": sql_query,
             })
 
-        dangerous_ops = detect_dangerous_sql(sql_query)
-        if dangerous_ops:
+        if not is_read_only_sql(sql_query):
             return json.dumps({
-                "type": "confirmation_required",
+                "type": "error",
                 "sql": sql_query,
-                "dangerous_operations": dangerous_ops,
-                "table": sql_to_table_preview(sql_query),
+                "message": "Write operations are temporarily disabled for security reasons. Only read-only queries are allowed.",
             })
 
         sql_upper = sql_query.upper().strip()
-        sql_type = 'select' if sql_upper.startswith('SELECT') else 'other'
+        sql_type = 'select' if sql_upper.startswith(("SELECT", "WITH", "SHOW", "DESCRIBE", "DESC", "EXPLAIN")) else 'other'
 
         if sql_type == 'select':
             # Check cache
@@ -709,24 +906,11 @@ def get_response(question: str, db, db_name: str, chat_history: list = []):
             return f"SQL: `{sql_query}`\nOutput: {json.dumps(output_data)}"
 
         else:
-            # Non-SELECT  (UPDATE / DELETE / INSERT after confirmation)
-            result = db.run(sql_query)
-            clean_result = result.strip() if result else ""
-
-            if 'Query OK' in clean_result or 'rows affected' in clean_result or 'row affected' in clean_result:
-                match = re.search(r'(\d+) rows? affected', clean_result)
-                affected_rows = int(match.group(1)) if match else 0
-                message = f"✅ Statement executed successfully. {affected_rows} row{'s' if affected_rows != 1 else ''} affected."
-            else:
-                message = clean_result or "✅ Statement executed successfully."
-                affected_rows = 0
-
-            output_data = {
-                "type": "status",
-                "message": message,
-                "affected_rows": affected_rows,
-            }
-            return f"SQL: `{sql_query}`\nOutput: {json.dumps(output_data)}"
+            return json.dumps({
+                "type": "error",
+                "sql": sql_query,
+                "message": "Only read-only SQL queries are supported in production mode.",
+            })
 
     except Exception as e:
         print(f"Error in get_response: {str(e)}")
@@ -742,19 +926,24 @@ def get_response(question: str, db, db_name: str, chat_history: list = []):
                 pass
 
 
+def run_chat_query(question: str, db_uri: str, db_name: str, chat_history: Optional[list] = None) -> str:
+    db = SQLDatabase(engine_cache.get(db_uri))
+    return get_response(question=question, db=db, db_name=db_name, chat_history=chat_history or [])
+
+
 # ─────────────────────────────────────────────
 # AUTH ENDPOINTS
 # ─────────────────────────────────────────────
 @app.post("/api/send-otp")
 @limiter.limit("5/minute")
-async def send_otp_for_signup(request: Request, otp_request: OtpRequest):
+async def send_otp_for_signup(request: Request, otp_request: OtpRequest, db: Session = Depends(get_db)):
     try:
         validate_email(otp_request.email)
     except EmailNotValidError as e:
         raise HTTPException(status_code=400, detail=f"Invalid email address: {str(e)}")
 
     otp = generate_otp()
-    otp_manager.store(otp_request.email, otp)
+    otp_manager.store(otp_request.email, otp, db)
     # OTP is NOT logged to stdout
     send_otp_email(otp_request.email, otp)
     return {"success": True, "message": "OTP has been sent to your email."}
@@ -767,7 +956,7 @@ async def signup_user(user: UserCreate, db: Session = Depends(get_db)):
     except EmailNotValidError as e:
         raise HTTPException(status_code=400, detail=f"Invalid email address: {str(e)}")
 
-    is_valid, error_msg = otp_manager.verify(user.email, user.otp)
+    is_valid, error_msg = otp_manager.verify(user.email, user.otp, db)
     if not is_valid:
         raise HTTPException(status_code=400, detail=error_msg)
 
@@ -786,11 +975,13 @@ async def signup_user(user: UserCreate, db: Session = Depends(get_db)):
     db.add(db_user)
     db.commit()
     db.refresh(db_user)
+    auth_token = create_auth_token(db_user.id, db)
 
     # Return user so frontend can auto-login without a second round-trip
     return {
         "success": True,
         "message": "User created successfully",
+        "auth_token": auth_token,
         "user": {
             "id": db_user.id,
             "email": db_user.email,
@@ -806,12 +997,14 @@ async def signup_user(user: UserCreate, db: Session = Depends(get_db)):
 @limiter.limit("10/minute")
 async def login_for_access_token(request: Request, form_data: UserLogin, db: Session = Depends(get_db)):
     user = get_user(form_data.identifier, db)
-    if not user or not verify_password(form_data.password, user.hashed_password):
+    if user is None or not verify_password(form_data.password, user.hashed_password):
         raise HTTPException(status_code=401, detail="Incorrect email or password")
+    auth_token = create_auth_token(user.id, db)
 
     return {
         "success": True,
         "message": "Login successful",
+        "auth_token": auth_token,
         "user": {
             "id": user.id,
             "email": user.email,
@@ -824,9 +1017,14 @@ async def login_for_access_token(request: Request, form_data: UserLogin, db: Ses
 
 
 @app.get("/api/profile/{user_id}")
-async def get_user_profile(user_id: int, db: Session = Depends(get_db)):
+async def get_user_profile(
+    user_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    assert_user_access(user_id, current_user)
     user = db.query(User).filter(User.id == user_id).first()
-    if not user:
+    if user is None:
         raise HTTPException(status_code=404, detail="User not found")
     return {
         "success": True,
@@ -841,11 +1039,27 @@ async def get_user_profile(user_id: int, db: Session = Depends(get_db)):
     }
 
 
+@app.post("/api/logout")
+async def logout_user(
+    authorization: Optional[str] = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    if authorization:
+        try:
+            revoke_auth_token(extract_bearer_token(authorization), db)
+        except HTTPException:
+            pass
+    return {"success": True, "message": "Logged out successfully"}
+
+
 # ─────────────────────────────────────────────
 # DATABASE CONNECTION  (per-user session tokens)
 # ─────────────────────────────────────────────
 @app.post("/api/list-databases")
-async def list_databases(config: ServerConnectionConfig):
+async def list_databases(
+    config: ServerConnectionConfig,
+    current_user: User = Depends(get_current_user),
+):
     try:
         import mysql.connector
         connection = mysql.connector.connect(
@@ -866,7 +1080,10 @@ async def list_databases(config: ServerConnectionConfig):
 
 
 @app.post("/api/create-database")
-async def create_database(request: CreateDatabaseRequest):
+async def create_database(
+    request: CreateDatabaseRequest,
+    current_user: User = Depends(get_current_user),
+):
     try:
         import mysql.connector
         if not re.match(r'^[a-zA-Z0-9_]+$', request.database_name):
@@ -888,7 +1105,11 @@ async def create_database(request: CreateDatabaseRequest):
 
 
 @app.post("/api/connect")
-async def connect_db(config: DBConfig):
+async def connect_db(
+    config: DBConfig,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     """
     Validates the connection and returns a per-user session token.
     The client MUST store this token and send it as X-DB-Session header
@@ -901,7 +1122,7 @@ async def connect_db(config: DBConfig):
             f"@{config.host}:{config.port}/{config.database}"
         )
         _validate_database_connection(db_uri)
-        token = db_session_store.create(db_uri, config.database)
+        token = db_session_store.create(current_user.id, db_uri, config.database, db)
         print("Database connection successful, session token issued")
         return {"success": True, "database": config.database, "session_token": token}
     except Exception as e:
@@ -919,25 +1140,33 @@ def _validate_database_connection(db_uri: str):
 
 
 @app.post("/api/disconnect")
-async def disconnect_db(x_db_session: Optional[str] = Header(default=None)):
+async def disconnect_db(
+    x_db_session: Optional[str] = Header(default=None),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     if x_db_session:
-        db_session_store.delete(x_db_session)
+        db_session_store.delete(x_db_session, db, current_user.id)
     query_cache.clear()
     return {"success": True, "message": "Database disconnected successfully"}
 
 
 @app.get("/api/connection-status")
-async def get_connection_status(x_db_session: Optional[str] = Header(default=None)):
+async def get_connection_status(
+    x_db_session: Optional[str] = Header(default=None),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     if not x_db_session:
         return {"success": True, "connected": False, "database": None}
-    session = db_session_store.get(x_db_session)
-    if not session:
+    session = db_session_store.get(x_db_session, db, current_user.id)
+    if session is None:
         return {"success": True, "connected": False, "database": None}
     try:
         _validate_database_connection(session["db_uri"])
         return {"success": True, "connected": True, "database": session["db_name"]}
     except Exception:
-        db_session_store.delete(x_db_session)
+        db_session_store.delete(x_db_session, db, current_user.id)
         return {"success": True, "connected": False, "database": None}
 
 
@@ -950,7 +1179,7 @@ async def get_table_schema(
     db_session: Dict[str, Any] = Depends(get_db_session),
 ):
     try:
-        db = SQLDatabase.from_uri(db_session["db_uri"])
+        db = SQLDatabase(engine_cache.get(db_session["db_uri"]))
         connection = db._engine.connect()
         result = connection.execute(text(f"DESCRIBE `{table_name}`"))
         columns_data = result.fetchall()
@@ -973,7 +1202,7 @@ async def get_table_schema(
 @app.get("/api/database-tables")
 async def get_database_tables(db_session: Dict[str, Any] = Depends(get_db_session)):
     try:
-        db = SQLDatabase.from_uri(db_session["db_uri"])
+        db = SQLDatabase(engine_cache.get(db_session["db_uri"]))
         connection = db._engine.connect()
         result = connection.execute(text("SHOW TABLES"))
         table_names = [row[0] for row in result.fetchall()]
@@ -1009,16 +1238,14 @@ async def chat_endpoint(
     db_session: Dict[str, Any] = Depends(get_db_session),
 ):
     try:
-        # Reuse engine per request – no new engine created every call
         db_uri = db_session["db_uri"]
         db_name = db_session["db_name"]
-
-        db = SQLDatabase.from_uri(db_uri)
-        response = get_response(
-            question=chat_request.question,
-            db=db,
-            db_name=db_name,
-            chat_history=chat_request.chat_history,
+        response = await run_in_threadpool(
+            run_chat_query,
+            chat_request.question,
+            db_uri,
+            db_name,
+            chat_request.chat_history,
         )
         return {"success": True, "response": response}
     except HTTPException as e:
@@ -1048,37 +1275,38 @@ async def confirm_sql_action():
 # NOTE: delete-all MUST be declared before /{session_id}
 # ─────────────────────────────────────────────
 @app.get("/api/chat-sessions")
-async def get_chat_sessions(user_id: int):
-    if not user_id:
-        raise HTTPException(status_code=400, detail="user_id is required")
-    db_session = SessionLocal()
-    try:
-        sessions = db_session.query(ChatSession).filter(ChatSession.user_id == user_id).all()
-        result = []
-        for session in sessions:
-            result.append({
-                "id": session.id,
-                "title": session.title,
-                "messages": json.loads(str(session.messages)),
-                "timestamp": datetime.utcnow().isoformat(),
-            })
-        return result
-    finally:
-        db_session.close()
+async def get_chat_sessions(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    sessions = db.query(ChatSession).filter(ChatSession.user_id == current_user.id).all()
+    result = []
+    for session in sessions:
+        result.append({
+            "id": session.id,
+            "title": session.title,
+            "messages": json.loads(str(session.messages)),
+            "timestamp": datetime.utcnow().isoformat(),
+        })
+    return result
 
 
 @app.post("/api/chat-sessions")
-async def create_chat_session(session: dict):
-    db_session = SessionLocal()
+async def create_chat_session(
+    session: ChatSessionCreateRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    assert_user_access(session.user_id, current_user)
     try:
         new_session = ChatSession(
-            user_id=session.get("user_id"),
-            title=session.get("title", "Untitled Chat"),
-            messages=json.dumps(session.get("messages", [])),
+            user_id=current_user.id,
+            title=session.title or "Untitled Chat",
+            messages=json.dumps(session.messages),
         )
-        db_session.add(new_session)
-        db_session.commit()
-        db_session.refresh(new_session)
+        db.add(new_session)
+        db.commit()
+        db.refresh(new_session)
         return {
             "id": new_session.id,
             "title": new_session.title,
@@ -1086,26 +1314,29 @@ async def create_chat_session(session: dict):
             "timestamp": datetime.utcnow().isoformat(),
         }
     except Exception as e:
-        db_session.rollback()
+        db.rollback()
         raise HTTPException(status_code=500, detail=f"Failed to create chat session: {str(e)}")
-    finally:
-        db_session.close()
 
 
 @app.put("/api/chat-sessions/{session_id}")
-async def update_chat_session(session_id: int, session: dict):
-    db_session = SessionLocal()
+async def update_chat_session(
+    session_id: int,
+    session: ChatSessionUpdateRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    assert_user_access(session.user_id, current_user)
     try:
-        existing_session = db_session.query(ChatSession).filter(ChatSession.id == session_id).first()
+        existing_session = db.query(ChatSession).filter(ChatSession.id == session_id).first()
         if not existing_session:
             raise HTTPException(status_code=404, detail="Chat session not found")
-        if cast(int, existing_session.user_id) != session.get("user_id"):
+        if cast(int, existing_session.user_id) != current_user.id:
             raise HTTPException(status_code=403, detail="Unauthorized to update this session")
-        if "title" in session:
-            existing_session.title = session["title"]
-        if "messages" in session:
-            setattr(existing_session, 'messages', json.dumps(session["messages"]))
-        db_session.commit()
+        if session.title is not None:
+            existing_session.title = session.title
+        if session.messages is not None:
+            setattr(existing_session, 'messages', json.dumps(session.messages))
+        db.commit()
         return {
             "id": existing_session.id,
             "title": existing_session.title,
@@ -1115,64 +1346,63 @@ async def update_chat_session(session_id: int, session: dict):
     except HTTPException:
         raise
     except Exception as e:
-        db_session.rollback()
+        db.rollback()
         raise HTTPException(status_code=500, detail=f"Failed to update chat session: {str(e)}")
-    finally:
-        db_session.close()
 
 
 # IMPORTANT: delete-all must come BEFORE the dynamic {session_id} route
 @app.delete("/api/chat-sessions/delete-all")
-async def delete_all_chat_sessions(user_id: int):
-    if user_id is None:
-        raise HTTPException(status_code=400, detail="user_id is required")
-    db_session = SessionLocal()
+async def delete_all_chat_sessions(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     try:
-        sessions = db_session.query(ChatSession).filter(ChatSession.user_id == user_id).all()
+        sessions = db.query(ChatSession).filter(ChatSession.user_id == current_user.id).all()
         if not sessions:
             return {"success": True, "message": "No chat sessions to delete"}
         for session in sessions:
-            db_session.delete(session)
-        db_session.commit()
+            db.delete(session)
+        db.commit()
         return {"success": True, "message": f"Deleted {len(sessions)} chat sessions"}
     except Exception as e:
-        db_session.rollback()
+        db.rollback()
         raise HTTPException(status_code=500, detail=f"Failed to delete chat sessions: {str(e)}")
-    finally:
-        db_session.close()
 
 
 @app.delete("/api/chat-sessions/{session_id}")
 async def delete_chat_session(
     session_id: int = Path(..., description="The ID of the chat session to delete"),
     user_id: Optional[int] = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
-    if user_id is None:
-        raise HTTPException(status_code=400, detail="user_id is required")
-    db_session = SessionLocal()
+    assert_user_access(user_id, current_user)
     try:
-        chat_session = db_session.query(ChatSession).filter(ChatSession.id == session_id).first()
+        chat_session = db.query(ChatSession).filter(ChatSession.id == session_id).first()
         if not chat_session:
             raise HTTPException(status_code=404, detail="Chat session not found")
-        if cast(int, chat_session.user_id) != user_id:
+        if cast(int, chat_session.user_id) != current_user.id:
             raise HTTPException(status_code=403, detail="Unauthorized to delete this session")
-        db_session.delete(chat_session)
-        db_session.commit()
+        db.delete(chat_session)
+        db.commit()
         return {"success": True, "message": "Chat session deleted"}
     except HTTPException:
         raise
     except Exception as e:
-        db_session.rollback()
+        db.rollback()
         raise HTTPException(status_code=500, detail=f"Failed to delete chat session: {str(e)}")
-    finally:
-        db_session.close()
 
 
 # ─────────────────────────────────────────────
 # FAVORITES
 # ─────────────────────────────────────────────
 @app.get("/api/favorites/{user_id}")
-async def get_favorites(user_id: int, db: Session = Depends(get_db)):
+async def get_favorites(
+    user_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    assert_user_access(user_id, current_user)
     favorites = db.query(FavoriteQuery).filter(
         FavoriteQuery.user_id == user_id
     ).order_by(FavoriteQuery.created_at.desc()).all()
@@ -1187,7 +1417,13 @@ async def get_favorites(user_id: int, db: Session = Depends(get_db)):
 
 
 @app.get("/api/favorites/{user_id}/check")
-async def check_favorite(user_id: int, sql: str, db: Session = Depends(get_db)):
+async def check_favorite(
+    user_id: int,
+    sql: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    assert_user_access(user_id, current_user)
     favorite = db.query(FavoriteQuery).filter(
         FavoriteQuery.user_id == user_id,
         FavoriteQuery.sql_query == sql,
@@ -1199,15 +1435,20 @@ async def check_favorite(user_id: int, sql: str, db: Session = Depends(get_db)):
 
 
 @app.post("/api/favorites")
-async def add_favorite(favorite: FavoriteQueryCreate, db: Session = Depends(get_db)):
+async def add_favorite(
+    favorite: FavoriteQueryCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    assert_user_access(favorite.user_id, current_user)
     existing = db.query(FavoriteQuery).filter(
-        FavoriteQuery.user_id == favorite.user_id,
+        FavoriteQuery.user_id == current_user.id,
         FavoriteQuery.sql_query == favorite.sql_query,
     ).first()
     if existing:
         return {"success": False, "message": "Query already in favorites"}
     new_favorite = FavoriteQuery(
-        user_id=favorite.user_id,
+        user_id=current_user.id,
         question=favorite.question,
         sql_query=favorite.sql_query,
         tags=favorite.tags,
@@ -1220,10 +1461,16 @@ async def add_favorite(favorite: FavoriteQueryCreate, db: Session = Depends(get_
 
 
 @app.delete("/api/favorites/{favorite_id}")
-async def remove_favorite(favorite_id: int, user_id: int, db: Session = Depends(get_db)):
+async def remove_favorite(
+    favorite_id: int,
+    user_id: Optional[int] = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    assert_user_access(user_id, current_user)
     favorite = db.query(FavoriteQuery).filter(
         FavoriteQuery.id == favorite_id,
-        FavoriteQuery.user_id == user_id,
+        FavoriteQuery.user_id == current_user.id,
     ).first()
     if not favorite:
         raise HTTPException(status_code=404, detail="Favorite not found")
@@ -1236,7 +1483,12 @@ async def remove_favorite(favorite_id: int, user_id: int, db: Session = Depends(
 # USER SETTINGS
 # ─────────────────────────────────────────────
 @app.get("/api/settings/{user_id}")
-async def get_user_settings(user_id: int, db: Session = Depends(get_db)):
+async def get_user_settings(
+    user_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    assert_user_access(user_id, current_user)
     settings = db.query(UserSettings).filter(UserSettings.user_id == user_id).first()
     if not settings:
         settings = UserSettings(user_id=user_id)
@@ -1258,7 +1510,9 @@ async def update_user_settings(
     user_id: int,
     settings_update: UserSettingsUpdate,
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
+    assert_user_access(user_id, current_user)
     settings = db.query(UserSettings).filter(UserSettings.user_id == user_id).first()
     if not settings:
         settings = UserSettings(user_id=user_id)
@@ -1304,6 +1558,8 @@ async def export_results(request: ExportRequest):
             }
         else:
             raise HTTPException(status_code=400, detail="Unsupported export format. Use 'csv' or 'json'")
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Export failed: {str(e)}")
 
@@ -1314,7 +1570,7 @@ async def export_results(request: ExportRequest):
 @app.get("/api/search/tables")
 async def search_tables(query: str, db_session: Dict[str, Any] = Depends(get_db_session)):
     try:
-        db = SQLDatabase.from_uri(db_session["db_uri"])
+        db = SQLDatabase(engine_cache.get(db_session["db_uri"]))
         schema_info = db.get_table_info()
         query_lower = query.lower()
         results = {"tables": [], "columns": []}
@@ -1339,15 +1595,20 @@ async def search_tables(query: str, db_session: Dict[str, Any] = Depends(get_db_
 # QUERY HISTORY
 # ─────────────────────────────────────────────
 @app.post("/api/history/track")
-async def track_query_execution(data: dict, db: Session = Depends(get_db)):
+async def track_query_execution(
+    data: QueryHistoryTrackRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    assert_user_access(data.user_id, current_user)
     history = QueryHistory(
-        user_id=data.get("user_id"),
-        session_id=data.get("session_id"),
-        question=data.get("question"),
-        sql_query=data.get("sql_query"),
-        success=data.get("success", True),
-        execution_time_ms=data.get("execution_time_ms"),
-        row_count=data.get("row_count"),
+        user_id=current_user.id,
+        session_id=data.session_id,
+        question=data.question,
+        sql_query=data.sql_query,
+        success=data.success,
+        execution_time_ms=data.execution_time_ms,
+        row_count=data.row_count,
     )
     db.add(history)
     db.commit()
@@ -1355,7 +1616,13 @@ async def track_query_execution(data: dict, db: Session = Depends(get_db)):
 
 
 @app.get("/api/history/{user_id}")
-async def get_query_history(user_id: int, limit: int = 50, db: Session = Depends(get_db)):
+async def get_query_history(
+    user_id: int,
+    limit: int = 50,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    assert_user_access(user_id, current_user)
     history = db.query(QueryHistory).filter(
         QueryHistory.user_id == user_id
     ).order_by(QueryHistory.created_at.desc()).limit(limit).all()
@@ -1371,7 +1638,12 @@ async def get_query_history(user_id: int, limit: int = 50, db: Session = Depends
 
 
 @app.get("/api/history/{user_id}/stats")
-async def get_query_stats(user_id: int, db: Session = Depends(get_db)):
+async def get_query_stats(
+    user_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    assert_user_access(user_id, current_user)
     total_queries = db.query(QueryHistory).filter(QueryHistory.user_id == user_id).count()
     successful_queries = db.query(QueryHistory).filter(
         QueryHistory.user_id == user_id,
@@ -1401,20 +1673,31 @@ def serialize_dashboard(dashboard: UserDashboard) -> Dict[str, Any]:
 
 
 @app.get("/api/custom-dashboards/{user_id}")
-async def get_user_dashboards(user_id: int, db: Session = Depends(get_db)):
+async def get_user_dashboards(
+    user_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    assert_user_access(user_id, current_user)
     dashboards = db.query(UserDashboard).filter(UserDashboard.user_id == user_id).all()
     return [serialize_dashboard(dashboard) for dashboard in dashboards]
 
 
 @app.post("/api/custom-dashboards")
-async def create_dashboard(dashboard: DashboardCreate, db: Session = Depends(get_db)):
+async def create_dashboard(
+    dashboard: DashboardCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    assert_user_access(dashboard.user_id, current_user)
     existing = db.query(UserDashboard).filter(
-        UserDashboard.dashboard_id == dashboard.dashboard_id
+        UserDashboard.dashboard_id == dashboard.dashboard_id,
+        UserDashboard.user_id == current_user.id,
     ).first()
     if existing:
         raise HTTPException(status_code=400, detail="Dashboard ID already exists")
     new_dashboard = UserDashboard(
-        user_id=dashboard.user_id,
+        user_id=current_user.id,
         dashboard_id=dashboard.dashboard_id,
         name=dashboard.name,
         description=dashboard.description or '',
@@ -1427,10 +1710,17 @@ async def create_dashboard(dashboard: DashboardCreate, db: Session = Depends(get
 
 
 @app.put("/api/custom-dashboards/{dashboard_id}")
-async def update_dashboard(dashboard_id: str, updates: DashboardUpdate, user_id: int, db: Session = Depends(get_db)):
+async def update_dashboard(
+    dashboard_id: str,
+    updates: DashboardUpdate,
+    user_id: Optional[int] = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    assert_user_access(user_id, current_user)
     dashboard = db.query(UserDashboard).filter(
         UserDashboard.dashboard_id == dashboard_id,
-        UserDashboard.user_id == user_id,
+        UserDashboard.user_id == current_user.id,
     ).first()
     if not dashboard:
         raise HTTPException(status_code=404, detail="Dashboard not found")
@@ -1447,10 +1737,16 @@ async def update_dashboard(dashboard_id: str, updates: DashboardUpdate, user_id:
 
 
 @app.delete("/api/custom-dashboards/{dashboard_id}")
-async def delete_dashboard(dashboard_id: str, user_id: int, db: Session = Depends(get_db)):
+async def delete_dashboard(
+    dashboard_id: str,
+    user_id: Optional[int] = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    assert_user_access(user_id, current_user)
     dashboard = db.query(UserDashboard).filter(
         UserDashboard.dashboard_id == dashboard_id,
-        UserDashboard.user_id == user_id,
+        UserDashboard.user_id == current_user.id,
     ).first()
     if not dashboard:
         raise HTTPException(status_code=404, detail="Dashboard not found")
@@ -1460,20 +1756,25 @@ async def delete_dashboard(dashboard_id: str, user_id: int, db: Session = Depend
 
 
 @app.post("/api/custom-dashboards/migrate-from-localstorage")
-async def migrate_dashboards(migration: DashboardMigrate, db: Session = Depends(get_db)):
+async def migrate_dashboards(
+    migration: DashboardMigrate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    assert_user_access(migration.user_id, current_user)
     try:
         migrated_count = 0
         skipped_count = 0
         for dashboard_data in migration.dashboards_data:
             existing = db.query(UserDashboard).filter(
                 UserDashboard.dashboard_id == dashboard_data.get('id'),
-                UserDashboard.user_id == migration.user_id,
+                UserDashboard.user_id == current_user.id,
             ).first()
             if existing:
                 skipped_count += 1
                 continue
             new_dashboard = UserDashboard(
-                user_id=migration.user_id,
+                user_id=current_user.id,
                 dashboard_id=dashboard_data.get('id'),
                 name=dashboard_data.get('name', 'Untitled Dashboard'),
                 description=dashboard_data.get('description', ''),
@@ -1497,4 +1798,5 @@ async def migrate_dashboards(migration: DashboardMigrate, db: Session = Depends(
 
 @app.on_event("shutdown")
 async def shutdown_event():
+    engine_cache.dispose_all()
     print("Application shutdown - resources cleaned up")

@@ -47,6 +47,18 @@ export const DatabaseProvider = ({ children }: { children: ReactNode }) => {
   const [databaseInfo, setDatabaseInfo] = useState<DatabaseInfo | null>(null);
   const [databaseTables, setDatabaseTables] = useState<TableInfo[]>([]);
 
+  const fetchTables = async (): Promise<void> => {
+    try {
+      const res = await apiFetch('/api/database-tables');
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success) setDatabaseTables(data.tables || []);
+      }
+    } catch {
+      // silently ignore
+    }
+  };
+
   // On mount, check if we already have a valid session token
   useEffect(() => {
     const token = getDbSessionToken();
@@ -58,6 +70,7 @@ export const DatabaseProvider = ({ children }: { children: ReactNode }) => {
           if (data.connected && data.database) {
             setIsConnected(true);
             setDatabaseInfo({ database: data.database });
+            void fetchTables();
           } else {
             // Token is stale, clear it
             clearDbSessionToken();
@@ -94,7 +107,7 @@ export const DatabaseProvider = ({ children }: { children: ReactNode }) => {
         setIsConnected(true);
         setDatabaseInfo({ database: result.database });
         // Eagerly load tables
-        await _fetchTables();
+        await fetchTables();
         return { success: true };
       }
 
@@ -115,20 +128,6 @@ export const DatabaseProvider = ({ children }: { children: ReactNode }) => {
     setDatabaseInfo(null);
     setDatabaseTables([]);
   };
-
-  const _fetchTables = async (): Promise<void> => {
-    try {
-      const res = await apiFetch('/api/database-tables');
-      if (res.ok) {
-        const data = await res.json();
-        if (data.success) setDatabaseTables(data.tables || []);
-      }
-    } catch {
-      // silently ignore
-    }
-  };
-
-  const fetchTables = _fetchTables;
 
   return (
     <DatabaseContext.Provider

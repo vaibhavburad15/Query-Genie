@@ -7,9 +7,12 @@
 // ─────────────────────────────────────────────────────────────
 
 export const BASE_URL: string =
-  (import.meta as any).env?.VITE_API_URL ?? 'http://localhost:8000';
+  (import.meta as any).env?.VITE_API_URL ??
+  (import.meta as any).env?.VITE_API_BASE_URL ??
+  'http://localhost:8000';
 
 const SESSION_KEY = 'db_session_token';
+const AUTH_TOKEN_KEY = 'auth_token';
 
 // ── Session token helpers ────────────────────────────────────
 
@@ -25,21 +28,38 @@ export function clearDbSessionToken(): void {
   sessionStorage.removeItem(SESSION_KEY);
 }
 
+export function storeAuthToken(token: string): void {
+  localStorage.setItem(AUTH_TOKEN_KEY, token);
+}
+
+export function getAuthToken(): string | null {
+  return localStorage.getItem(AUTH_TOKEN_KEY);
+}
+
+export function clearAuthToken(): void {
+  localStorage.removeItem(AUTH_TOKEN_KEY);
+}
+
 // ── Core fetch wrapper ───────────────────────────────────────
 
 export async function apiFetch(
   path: string,
   options: RequestInit = {}
 ): Promise<Response> {
-  const token = getDbSessionToken();
+  const dbSessionToken = getDbSessionToken();
+  const authToken = getAuthToken();
 
   const headers: Record<string, string> = {
     ...(options.headers as Record<string, string> | undefined),
   };
 
   // Inject session token header if we have one
-  if (token) {
-    headers['X-DB-Session'] = token;
+  if (dbSessionToken) {
+    headers['X-DB-Session'] = dbSessionToken;
+  }
+
+  if (authToken) {
+    headers['Authorization'] = `Bearer ${authToken}`;
   }
 
   // Only set Content-Type for requests with a body, and only if not already set

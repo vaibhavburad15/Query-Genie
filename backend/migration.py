@@ -9,7 +9,7 @@ from extended_models import Base, QueryRecommendation
 import os
 
 # Read database URL from environment or use default
-DATABASE_URL = os.getenv("DATABASE_URL", "mysql+pymysql://root:password@localhost/querygenie")
+DATABASE_URL = os.getenv("DATABASE_URL", "mysql+mysqlconnector://root:password@localhost/querygenie")
 
 # Create engine
 engine = create_engine(DATABASE_URL, echo=True)
@@ -30,6 +30,9 @@ def create_tables():
         print("  - user_settings")
         print("  - query_recommendations")
         print("  - query_history")
+        print("  - auth_sessions")
+        print("  - database_sessions")
+        print("  - otp_codes")
         return True
     except Exception as e:
         print(f"❌ Migration failed: {e}")
