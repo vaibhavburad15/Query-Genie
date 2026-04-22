@@ -3,11 +3,12 @@ import React, { useState, useEffect } from 'react';
 import { ChevronDown, ChevronRight, Heart, Trash2 } from 'lucide-react';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Button } from '@/components/ui/button';
+import { apiFetch } from '@/services/apiClient';
 
 interface FavoritesPanelProps {
   userId: number;
   onSelectFavorite: (question: string) => void;
-  refreshTrigger?: number; // Add this prop to trigger refresh
+  refreshTrigger?: number;
 }
 
 interface Favorite {
@@ -22,24 +23,21 @@ interface Favorite {
 const FavoritesPanel: React.FC<FavoritesPanelProps> = ({
   userId,
   onSelectFavorite,
-  refreshTrigger, // Receive refresh trigger
+  refreshTrigger,
 }) => {
   const [favorites, setFavorites] = useState<Favorite[]>([]);
   const [isExpanded, setIsExpanded] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
 
-  // Load favorites when userId changes OR when refreshTrigger changes
   useEffect(() => {
-    if (userId) {
-      loadFavorites();
-    }
-  }, [userId, refreshTrigger]); // Add refreshTrigger as dependency
+    if (userId) loadFavorites();
+  }, [userId, refreshTrigger]);
 
   const loadFavorites = async () => {
     setIsLoading(true);
     try {
-      const response = await fetch(`http://localhost:8000/api/favorites/${userId}`);
-      const data = await response.json();
+      const res = await apiFetch(`/api/favorites/${userId}`);
+      const data = await res.json();
       setFavorites(data);
     } catch (error) {
       console.error('Failed to load favorites:', error);
@@ -50,14 +48,10 @@ const FavoritesPanel: React.FC<FavoritesPanelProps> = ({
 
   const removeFavorite = async (favoriteId: number, e: React.MouseEvent) => {
     e.stopPropagation();
-    
     if (!window.confirm('Remove this query from favorites?')) return;
-
     try {
-      await fetch(`http://localhost:8000/api/favorites/${favoriteId}?user_id=${userId}`, {
-        method: 'DELETE',
-      });
-      setFavorites(favorites.filter(f => f.id !== favoriteId));
+      await apiFetch(`/api/favorites/${favoriteId}?user_id=${userId}`, { method: 'DELETE' });
+      setFavorites((prev) => prev.filter((f) => f.id !== favoriteId));
     } catch (error) {
       console.error('Failed to remove favorite:', error);
     }
@@ -102,19 +96,14 @@ const FavoritesPanel: React.FC<FavoritesPanelProps> = ({
                   className="flex items-start gap-2 p-2 mb-1 rounded hover:bg-pink-50 cursor-pointer transition-colors group"
                 >
                   <div className="flex-1 min-w-0">
-                    <h4 className="text-xs font-medium text-foreground truncate">
-                      {fav.question}
-                    </h4>
+                    <h4 className="text-xs font-medium text-foreground truncate">{fav.question}</h4>
                     <code className="text-xs text-muted-foreground bg-gray-100 px-1 rounded truncate block mt-1">
                       {fav.sql_query}
                     </code>
                     {fav.tags && (
                       <div className="flex gap-1 mt-1 flex-wrap">
                         {fav.tags.split(',').map((tag, i) => (
-                          <span
-                            key={i}
-                            className="text-xs px-1.5 py-0.5 bg-pink-100 text-pink-700 rounded"
-                          >
+                          <span key={i} className="text-xs px-1.5 py-0.5 bg-pink-100 text-pink-700 rounded">
                             {tag.trim()}
                           </span>
                         ))}

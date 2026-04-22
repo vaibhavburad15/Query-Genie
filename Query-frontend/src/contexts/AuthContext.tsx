@@ -1,5 +1,7 @@
+// src/contexts/AuthContext.tsx
 import { createContext, useContext, useState, ReactNode, useEffect } from 'react';
 import { login as apiLogin, signup as apiSignup, sendOtp as apiSendOtp } from '@/services/api';
+import { clearDbSessionToken } from '@/services/apiClient';
 
 interface User {
   id: number;
@@ -7,7 +9,7 @@ interface User {
   firstName: string;
   lastName: string;
   username: string;
-  contactNumber: string;
+  contactNumber?: string;
   gender: string;
 }
 
@@ -45,35 +47,34 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [user, setUser] = useState<User | null>(null);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const [justLoggedIn, setJustLoggedIn] = useState(false);
 
-  // Check for stored auth on mount
+  // Rehydrate from localStorage on mount
   useEffect(() => {
     const storedUser = localStorage.getItem('user');
     const storedAuth = localStorage.getItem('isAuthenticated');
-
     if (storedUser && storedAuth === 'true') {
-      setUser(JSON.parse(storedUser));
-      setIsAuthenticated(true);
+      try {
+        setUser(JSON.parse(storedUser));
+        setIsAuthenticated(true);
+      } catch {
+        localStorage.removeItem('user');
+        localStorage.removeItem('isAuthenticated');
+      }
     }
   }, []);
-
-  const [justLoggedIn, setJustLoggedIn] = useState(false);
 
   const login = async (credentials: { identifier: string; password: string }): Promise<boolean> => {
     setIsLoading(true);
     try {
       const response = await apiLogin(credentials);
-      if (response.success) {
+      if (response.success && response.user) {
         const userData: User = response.user;
-
         setUser(userData);
         setIsAuthenticated(true);
         setJustLoggedIn(true);
-
-        // Store in localStorage
         localStorage.setItem('user', JSON.stringify(userData));
         localStorage.setItem('isAuthenticated', 'true');
-
         return true;
       }
       return false;
@@ -97,25 +98,23 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     setIsLoading(true);
     try {
       const response = await apiSignup(userData);
+
+      // Backend now returns the user object on successful signup
       if (response.success && response.user) {
-        // ✅ FIX: Use actual user ID from backend
         const newUser: User = {
-          id: response.user.id, // Use backend ID instead of Date.now()
+          id: response.user.id,
           email: response.user.email,
           firstName: response.user.firstName,
           lastName: response.user.lastName,
           username: response.user.username,
-          contactNumber: response.user.contactNumber || '',
+          contactNumber: response.user.contactNumber ?? '',
           gender: response.user.gender,
         };
-
         setUser(newUser);
         setIsAuthenticated(true);
         setJustLoggedIn(true);
-
         localStorage.setItem('user', JSON.stringify(newUser));
         localStorage.setItem('isAuthenticated', 'true');
-
         return true;
       }
       return false;
@@ -137,33 +136,33 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     }
   };
 
-  const resetJustLoggedIn = () => {
-    setJustLoggedIn(false);
-  };
+  const resetJustLoggedIn = () => setJustLoggedIn(false);
 
   const logout = () => {
     setUser(null);
     setIsAuthenticated(false);
     setJustLoggedIn(false);
-
-    // Clear localStorage
     localStorage.removeItem('user');
     localStorage.removeItem('isAuthenticated');
-
-    // Redirect to auth page will be handled by the component using this
+    // Clear the per-user DB session token so it isn't reused after logout
+    clearDbSessionToken();
   };
 
-  const value = {
-    user,
-    isAuthenticated,
-    isLoading,
-    justLoggedIn,
-    login,
-    signup,
-    sendOtp,
-    logout,
-    resetJustLoggedIn,
-  };
-
-  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
+  return (
+    <AuthContext.Provider
+      value={{
+        user,
+        isAuthenticated,
+        isLoading,
+        justLoggedIn,
+        login,
+        signup,
+        sendOtp,
+        logout,
+        resetJustLoggedIn,
+      }}
+    >
+      {children}
+    </AuthContext.Provider>
+  );
 };

@@ -9,7 +9,7 @@ export const useCachedChat = (question: string, chatHistory: ChatMessage[]) => {
     queryKey: ['chat', question],
     queryFn: () => sendChatMessage({ question, chat_history: chatHistory }),
     staleTime: 1000 * 60 * 5, // 5 minutes
-    cacheTime: 1000 * 60 * 10, // 10 minutes
+    gcTime: 1000 * 60 * 10, // 10 minutes
     enabled: !!question, // Only run when question exists
     retry: 3,
     retryDelay: (attemptIndex) => Math.pow(2, attemptIndex) * 1000, // Exponential backoff
@@ -32,8 +32,8 @@ export const useConnectDatabase = () => {
     mutationFn: connectToDB,
     onSuccess: () => {
       // Invalidate related queries on successful connection
-      queryClient.invalidateQueries(['database-tables']);
-      queryClient.invalidateQueries(['database-schema']);
+      queryClient.invalidateQueries({ queryKey: ['database-tables'] });
+      queryClient.invalidateQueries({ queryKey: ['database-schema'] });
     },
   });
 };
