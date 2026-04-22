@@ -5,8 +5,7 @@ Run this ONCE to create new tables and seed default data
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
-from extended_models import Base, TipOfTheDay, QueryRecommendation
-from datetime import datetime
+from extended_models import Base, QueryRecommendation
 import os
 
 # Read database URL from environment or use default
@@ -29,79 +28,12 @@ def create_tables():
         print("New tables created:")
         print("  - favorite_queries")
         print("  - user_settings")
-        print("  - tips_of_the_day")
         print("  - query_recommendations")
         print("  - query_history")
         return True
     except Exception as e:
         print(f"❌ Migration failed: {e}")
         return False
-
-def seed_tips(session):
-    """Add default tips"""
-    print("\n📝 Adding default tips...")
-    
-    tips = [
-        {
-            "title": "Natural Language Works!",
-            "content": "You can ask questions like 'Show me all customers' instead of writing SQL. Query Genie understands natural language!",
-            "category": "general"
-        },
-        {
-            "title": "Use Specific Column Names",
-            "content": "Be specific about which columns you want: 'Show customer name and email' works better than 'Show customers'.",
-            "category": "sql"
-        },
-        {
-            "title": "Favorite Your Queries",
-            "content": "Click the heart icon to save frequently used queries for quick access later!",
-            "category": "general"
-        },
-        {
-            "title": "Filter with Conditions",
-            "content": "You can add conditions like 'Show orders from last month' or 'Find customers in New York'.",
-            "category": "sql"
-        },
-        {
-            "title": "Export Your Results",
-            "content": "Download query results as CSV or JSON files using the export button!",
-            "category": "general"
-        },
-        {
-            "title": "Use Aggregations",
-            "content": "Ask for summaries: 'What is the total revenue?' or 'Count orders by status'.",
-            "category": "sql"
-        },
-        {
-            "title": "Join Multiple Tables",
-            "content": "You can query across tables: 'Show orders with customer names' will automatically join tables.",
-            "category": "sql"
-        },
-        {
-            "title": "Sort Your Results",
-            "content": "Add sorting: 'Show top 10 customers by revenue' or 'List products ordered by price'.",
-            "category": "sql"
-        },
-        {
-            "title": "Session History",
-            "content": "All your queries are saved in chat sessions. You can switch between sessions anytime!",
-            "category": "general"
-        },
-        {
-            "title": "SQL Safety Checks",
-            "content": "Dangerous queries (DELETE, DROP) require confirmation to prevent accidental data loss.",
-            "category": "security"
-        }
-    ]
-    
-    for tip_data in tips:
-        existing = session.query(TipOfTheDay).filter_by(title=tip_data["title"]).first()
-        if not existing:
-            tip = TipOfTheDay(**tip_data)
-            session.add(tip)
-    
-    session.commit()
-    print("  ✓ Added 10 tips")
 
 def seed_recommendations(session):
     """Add default query recommendations"""
@@ -191,7 +123,6 @@ def run_migration():
     
     try:
         # Seed default data
-        seed_tips(session)
         seed_recommendations(session)
         
         print("\n✅ Default data seeded successfully!")

@@ -23,20 +23,10 @@ class UserSettings(Base):
     theme = Column(String(50), default='light')
     language = Column(String(10), default='en')
     results_per_page = Column(Integer, default=10)
-    show_tips = Column(Boolean, default=True)
     auto_save_sessions = Column(Boolean, default=True)
     sql_syntax_highlighting = Column(Boolean, default=True)
     notification_preferences = Column(JSON, nullable=True)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-
-class TipOfTheDay(Base):
-    __tablename__ = "tips_of_the_day"
-    id = Column(Integer, primary_key=True, index=True)
-    title = Column(String(255), nullable=False)
-    content = Column(Text, nullable=False)
-    category = Column(String(100), nullable=False)
-    is_active = Column(Boolean, default=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
 
 class QueryRecommendation(Base):
     __tablename__ = "query_recommendations"
