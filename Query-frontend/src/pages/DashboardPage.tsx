@@ -1,4 +1,4 @@
-import React, { useEffect, useState, Suspense, lazy } from 'react';
+import React, { Suspense, lazy } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useToast } from '@/hooks/use-toast';
 import { useChatSession } from '@/hooks/useChatSession';
@@ -7,7 +7,6 @@ import { useDatabase } from '@/contexts/DatabaseContext';
 import { LoadingSpinner } from '@/components/ui/loading-spinner';
 import Sidebar from '@/components/dashboard/Sidebar';
 import ChatInput from '@/components/dashboard/ChatInput';
-import TipNotification from '@/components/dashboard/TipNotification';
 
 // ✅ Lazy load heavy components
 const ChatWindow = lazy(() => import('@/components/dashboard/ChatWindow'));
@@ -59,41 +58,7 @@ const DashboardPage = () => {
   const [isModalOpen, setIsModalOpen] = React.useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = React.useState(false);
   
-  const [showTip, setShowTip] = useState(false);
-  const [currentTip, setCurrentTip] = useState<any>(null);
-  const [userSettings, setUserSettings] = useState<any>(null);
-  const [favoritesRefreshTrigger, setFavoritesRefreshTrigger] = useState(0);
-
-  // Load daily tip on mount
-  useEffect(() => {
-    const loadDailyTip = async () => {
-      try {
-        const response = await fetch('http://localhost:8000/api/tips/daily');
-        const tip = await response.json();
-        setCurrentTip(tip);
-        setShowTip(true);
-        setTimeout(() => setShowTip(false), 10000);
-      } catch (error) {
-        console.error('Failed to load tip:', error);
-      }
-    };
-    loadDailyTip();
-  }, []);
-
-  // Load user settings
-  useEffect(() => {
-    const loadSettings = async () => {
-      if (!user?.id) return;
-      try {
-        const response = await fetch(`http://localhost:8000/api/settings/${user.id}`);
-        const settings = await response.json();
-        setUserSettings(settings);
-      } catch (error) {
-        console.error('Failed to load settings:', error);
-      }
-    };
-    loadSettings();
-  }, [user?.id]);
+  const [favoritesRefreshTrigger, setFavoritesRefreshTrigger] = React.useState(0);
 
   const refreshFavorites = () => {
     setFavoritesRefreshTrigger(prev => prev + 1);
@@ -233,13 +198,6 @@ const DashboardPage = () => {
 
   return (
     <div className="h-screen flex flex-col bg-background">
-      {showTip && currentTip && userSettings?.show_tips !== false && (
-        <TipNotification
-          tip={currentTip}
-          onClose={() => setShowTip(false)}
-        />
-      )}
-
       <div className="flex flex-1 overflow-hidden">
         <Sidebar
           isCollapsed={isSidebarCollapsed}
