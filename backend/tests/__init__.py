@@ -1,1 +1,0 @@
-# Query Genie Backend Tests

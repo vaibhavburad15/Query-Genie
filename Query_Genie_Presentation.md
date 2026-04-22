@@ -763,7 +763,6 @@ Emails are validated for proper format before OTP is sent or accounts are create
 | **Query History** | Tracks every query you've run: what you asked, the SQL, success/failure, execution time |
 | **Query Statistics** | See total queries run, success rate, and performance metrics |
 | **User Settings** | Customize theme (dark/light), language, results per page, and notification preferences |
-| **Tip of the Day** | Shows rotating SQL tips to help users learn SQL concepts |
 | **Dark/Light Theme** | Toggle between dark and light mode with system preference detection |
 
 ---
@@ -809,7 +808,6 @@ Emails are validated for proper format before OTP is sent or accounts are create
 | theme | String | "light" or "dark" |
 | language | String | "en" (default) |
 | results_per_page | Integer | Default: 10 |
-| show_tips | Boolean | Show tip of the day? |
 | auto_save_sessions | Boolean | Auto-save chat sessions? |
 | sql_syntax_highlighting | Boolean | Highlight SQL syntax? |
 | notification_preferences | JSON | Custom notification settings |
@@ -1019,7 +1017,7 @@ Query-Genie/
 │   │
 │   ├── extended_models.py            # Additional database models
 │   │                                 #   - FavoriteQuery, UserSettings
-│   │                                 #   - TipOfTheDay, QueryHistory
+│   │                                 #   - QueryHistory, QueryRecommendation
 │   │
 │   ├── migration.py                  # Database migration utilities
 │   ├── requirements.txt              # Python dependencies list
@@ -1108,6 +1106,3 @@ Query-Genie/
 3. **"Query caching with 5-minute TTL"** — repeated queries return instantly
 4. **"Connection pooling"** — 10 pre-warmed database connections for fast performance
 5. **"Code splitting"** — lazy-loaded pages for faster initial load
-
-
-

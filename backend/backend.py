@@ -20,7 +20,7 @@ from langchain_core.runnables import RunnablePassthrough
 from langchain_core.output_parsers import StrOutputParser
 from langchain_community.utilities import SQLDatabase
 from langchain_groq import ChatGroq
-from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime, ForeignKey, text, and_
+from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime, ForeignKey, text
 from sqlalchemy.orm import declarative_base
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.exc import SQLAlchemyError
@@ -40,7 +40,6 @@ from datetime import datetime
 from extended_models import (
     FavoriteQuery,
     UserSettings,
-    TipOfTheDay,
     QueryHistory,
     Base
 )
@@ -275,7 +274,6 @@ class UserSettingsUpdate(BaseModel):
     theme: Optional[str] = None
     language: Optional[str] = None
     results_per_page: Optional[int] = None
-    show_tips: Optional[bool] = None
     auto_save_sessions: Optional[bool] = None
     sql_syntax_highlighting: Optional[bool] = None
     notification_preferences: Optional[dict] = None
@@ -853,6 +851,7 @@ async def connect_db(config: DBConfig):
     print(f"Received connect request: host={config.host}, port={config.port}, database={config.database}")
     try:
         db_uri = f"mysql+mysqlconnector://{config.user}:{config.password}@{config.host}:{config.port}/{config.database}"
+        validate_database_connection(db_uri)
         app.state.db_uri = db_uri
         app.state.db_name = config.database
         print("Database connection successful")
@@ -861,19 +860,52 @@ async def connect_db(config: DBConfig):
         print(f"Database connection failed: {str(e)}")
         return {"success": False, "error": str(e)}
 
+
+def validate_database_connection(db_uri: str):
+    test_engine = create_engine(db_uri, pool_pre_ping=True)
+    try:
+        with test_engine.connect() as connection:
+            connection.execute(text("SELECT 1"))
+    finally:
+        test_engine.dispose()
+
+
+def clear_active_database_connection():
+    if hasattr(app.state, "db_uri"):
+        delattr(app.state, "db_uri")
+    if hasattr(app.state, "db_name"):
+        delattr(app.state, "db_name")
+    query_cache.clear()
+
 @app.post("/api/disconnect")
 async def disconnect_db():
     try:
-        if hasattr(app.state, "db_uri"):
-            delattr(app.state, "db_uri")
-        if hasattr(app.state, "db_name"):
-            delattr(app.state, "db_name")
-        query_cache.clear()
+        clear_active_database_connection()
         print("Database disconnected successfully")
         return {"success": True, "message": "Database disconnected successfully"}
     except Exception as e:
         print(f"Database disconnect failed: {str(e)}")
         return {"success": False, "error": str(e)}
+
+
+@app.get("/api/connection-status")
+async def get_connection_status():
+    if not hasattr(app.state, "db_uri"):
+        return {"success": True, "connected": False, "database": None}
+
+    try:
+        validate_database_connection(app.state.db_uri)
+        return {
+            "success": True,
+            "connected": True,
+            "database": getattr(app.state, "db_name", None)
+        }
+    except Exception as e:
+        print(f"Active database connection is no longer valid: {str(e)}")
+        clear_active_database_connection()
+        return {"success": True, "connected": False, "database": None}
+
+
 @app.get("/api/table-schema/{table_name}")
 async def get_table_schema(table_name: str):
     """Get detailed schema information for a specific table"""
@@ -1215,45 +1247,6 @@ async def check_favorite(user_id: int, sql: str, db: Session = Depends(get_db)):
         "favorite_id": exists.id if exists else None
     }
 
-@app.get("/api/tips/daily")
-async def get_daily_tip(db: Session = Depends(get_db)):
-    """Get a random tip of the day"""
-    import random
-    
-    tips = db.query(TipOfTheDay).filter(TipOfTheDay.is_active.is_(True)).all()
-    
-    if not tips:
-        return {
-            "title": "Welcome to Query Genie! 👋",
-            "content": "Start using Query Genie by connecting to your database and asking questions in natural language.",
-            "category": "general",
-            "icon": "💡"
-        }
-    
-    tip = random.choice(tips)
-    return {
-        "id": tip.id,
-        "title": tip.title,
-        "content": tip.content,
-        "category": tip.category,
-        "icon": "💡"
-    }
-
-
-@app.get("/api/tips/category/{category}")
-async def get_tips_by_category(category: str, db: Session = Depends(get_db)):
-    """Get all tips in a specific category"""
-    tips = db.query(TipOfTheDay).filter(and_(
-        TipOfTheDay.category == category,
-        TipOfTheDay.is_active.is_(True)
-    )).all()
-    
-    return [{
-        "id": tip.id,
-        "title": tip.title,
-        "content": tip.content,
-        "category": tip.category
-    } for tip in tips]
 
 #dashboard endpoint 
 @app.get("/api/custom-dashboards/{user_id}")
@@ -1522,7 +1515,6 @@ async def get_user_settings(user_id: int, db: Session = Depends(get_db)):
         "theme": settings.theme,
         "language": settings.language,
         "results_per_page": settings.results_per_page,
-        "show_tips": settings.show_tips,
         "auto_save_sessions": settings.auto_save_sessions,
         "sql_syntax_highlighting": settings.sql_syntax_highlighting,
         "notification_preferences": settings.notification_preferences or {}
@@ -1699,3 +1691,4 @@ async def shutdown_event():
     if hasattr(app.state, "db_uri"):
         delattr(app.state, "db_uri")
     print("Application shutdown - resources cleaned up")
+

@@ -57,7 +57,6 @@
 | ⭐ **Extras** | Favorite Queries | Save & tag frequently used queries for quick access |
 | ⭐ **Extras** | Query History & Stats | Track execution history, success rates & performance metrics |
 | ⭐ **Extras** | User Settings | Customizable preferences (theme, language, results per page) |
-| ⭐ **Extras** | Tip of the Day | Rotating SQL tips for learning |
 
 ---
 
