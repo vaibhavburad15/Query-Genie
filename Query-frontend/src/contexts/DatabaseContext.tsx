@@ -1,165 +1,140 @@
-import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
+// src/contexts/DatabaseContext.tsx
+// ─────────────────────────────────────────────────────────────
+// Stores the per-user DB session token returned by /api/connect
+// and makes it available to the whole app via context.
+// The token is also persisted in sessionStorage so it survives
+// a page refresh (but is cleared on tab close / logout).
+// ─────────────────────────────────────────────────────────────
+import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import { apiFetch, storeDbSessionToken, getDbSessionToken, clearDbSessionToken } from '@/services/apiClient';
 
-export interface DatabaseConnectionData {
-  type: string;
-  host: string;
-  port: string;
-  user: string;
-  password?: string;
+interface DatabaseInfo {
   database: string;
+}
+
+interface TableInfo {
+  name: string;
+  rowCount: number;
+  lastUpdated: string;
 }
 
 interface DatabaseContextType {
   isConnected: boolean;
-  databaseInfo: DatabaseConnectionData | null;
-  databaseTables: Array<{ name: string; rowCount: number; lastUpdated: string }>;
-  connect: (data: DatabaseConnectionData) => Promise<void>;
+  databaseInfo: DatabaseInfo | null;
+  databaseTables: TableInfo[];
+  connect: (data: {
+    host: string;
+    port: string;
+    user: string;
+    password: string;
+    database: string;
+    type?: string;
+  }) => Promise<{ success: boolean; error?: string }>;
   disconnect: () => Promise<void>;
   fetchTables: () => Promise<void>;
-  setDatabaseTables: React.Dispatch<React.SetStateAction<Array<{ name: string; rowCount: number; lastUpdated: string }>>>;
 }
 
 const DatabaseContext = createContext<DatabaseContextType | undefined>(undefined);
-const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
 
-export const DatabaseProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+export const useDatabase = () => {
+  const ctx = useContext(DatabaseContext);
+  if (!ctx) throw new Error('useDatabase must be used within DatabaseProvider');
+  return ctx;
+};
+
+export const DatabaseProvider = ({ children }: { children: ReactNode }) => {
   const [isConnected, setIsConnected] = useState(false);
-  const [databaseInfo, setDatabaseInfo] = useState<DatabaseConnectionData | null>(null);
-  const [databaseTables, setDatabaseTables] = useState<Array<{ name: string; rowCount: number; lastUpdated: string }>>([]);
+  const [databaseInfo, setDatabaseInfo] = useState<DatabaseInfo | null>(null);
+  const [databaseTables, setDatabaseTables] = useState<TableInfo[]>([]);
 
-  const clearConnectionState = useCallback(() => {
+  // On mount, check if we already have a valid session token
+  useEffect(() => {
+    const token = getDbSessionToken();
+    if (token) {
+      // Validate the existing session against the backend
+      apiFetch('/api/connection-status')
+        .then((r) => r.json())
+        .then((data) => {
+          if (data.connected && data.database) {
+            setIsConnected(true);
+            setDatabaseInfo({ database: data.database });
+          } else {
+            // Token is stale, clear it
+            clearDbSessionToken();
+          }
+        })
+        .catch(() => clearDbSessionToken());
+    }
+  }, []);
+
+  const connect = async (data: {
+    host: string;
+    port: string;
+    user: string;
+    password: string;
+    database: string;
+    type?: string;
+  }): Promise<{ success: boolean; error?: string }> => {
+    try {
+      const res = await apiFetch('/api/connect', {
+        method: 'POST',
+        body: JSON.stringify({
+          host: data.host,
+          port: parseInt(data.port, 10),
+          user: data.user,
+          password: data.password,
+          database: data.database,
+        }),
+      });
+      const result = await res.json();
+
+      if (result.success && result.session_token) {
+        // Store token so apiFetch auto-injects it from now on
+        storeDbSessionToken(result.session_token);
+        setIsConnected(true);
+        setDatabaseInfo({ database: result.database });
+        // Eagerly load tables
+        await _fetchTables();
+        return { success: true };
+      }
+
+      return { success: false, error: result.error || 'Connection failed' };
+    } catch (err: any) {
+      return { success: false, error: err?.message || 'Connection failed' };
+    }
+  };
+
+  const disconnect = async (): Promise<void> => {
+    try {
+      await apiFetch('/api/disconnect', { method: 'POST' });
+    } catch {
+      // best-effort
+    }
+    clearDbSessionToken();
     setIsConnected(false);
     setDatabaseInfo(null);
     setDatabaseTables([]);
-    localStorage.removeItem('dbConnection');
-  }, []);
+  };
 
-  const fetchTablesFromBackend = useCallback(async () => {
+  const _fetchTables = async (): Promise<void> => {
     try {
-      console.log('Fetching database tables from backend...');
-
-      const response = await fetch(`${API_BASE}/api/database-tables`);
-      const data = await response.json().catch(() => null);
-
-      if (!response.ok) {
-        if (response.status === 400 && data?.detail === 'Database not connected') {
-          console.warn('Stored database session is stale. Clearing frontend connection state.');
-          clearConnectionState();
-          return;
-        }
-
-        throw new Error(data?.detail || 'Failed to fetch tables');
+      const res = await apiFetch('/api/database-tables');
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success) setDatabaseTables(data.tables || []);
       }
-
-      if (data?.success && data.tables) {
-        console.log(`Successfully fetched ${data.total} tables.`, data.tables);
-        setDatabaseTables(data.tables);
-      } else {
-        console.warn('No tables found or empty response.');
-        setDatabaseTables([]);
-      }
-    } catch (error) {
-      console.error('Error fetching tables:', error);
-      setDatabaseTables([]);
+    } catch {
+      // silently ignore
     }
-  }, [clearConnectionState]);
+  };
 
-  useEffect(() => {
-    const restoreConnection = async () => {
-      const storedConnection = localStorage.getItem('dbConnection');
-      if (!storedConnection) {
-        return;
-      }
-
-      try {
-        const parsedConnection = JSON.parse(storedConnection) as DatabaseConnectionData;
-        console.log('Checking backend connection status for stored database:', parsedConnection.database);
-
-        const response = await fetch(`${API_BASE}/api/connection-status`);
-        if (!response.ok) {
-          throw new Error('Failed to verify backend connection status');
-        }
-
-        const status = await response.json();
-        const isSameDatabase = !status.database || status.database === parsedConnection.database;
-
-        if (status.connected && isSameDatabase) {
-          setDatabaseInfo(parsedConnection);
-          setIsConnected(true);
-          await fetchTablesFromBackend();
-          return;
-        }
-
-        console.warn('Backend is not connected to the stored database. Clearing stale frontend session.');
-        clearConnectionState();
-      } catch (error) {
-        console.error('Error restoring database connection:', error);
-        clearConnectionState();
-      }
-    };
-
-    restoreConnection();
-  }, [clearConnectionState, fetchTablesFromBackend]);
-
-  const connect = useCallback(async (data: DatabaseConnectionData) => {
-    console.log('Connecting to database:', data.database);
-    setDatabaseInfo(data);
-    setIsConnected(true);
-
-    localStorage.setItem('dbConnection', JSON.stringify({
-      host: data.host,
-      port: data.port,
-      user: data.user,
-      database: data.database,
-      type: data.type
-    }));
-
-    await fetchTablesFromBackend();
-  }, [fetchTablesFromBackend]);
-
-  const disconnect = useCallback(async () => {
-    console.log('Disconnecting from database');
-
-    try {
-      const token = localStorage.getItem('auth_token');
-      await fetch(`${API_BASE}/api/disconnect`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        }
-      });
-    } catch (error) {
-      console.error('Error disconnecting:', error);
-    }
-
-    clearConnectionState();
-  }, [clearConnectionState]);
-
-  const fetchTables = useCallback(async () => {
-    await fetchTablesFromBackend();
-  }, [fetchTablesFromBackend]);
+  const fetchTables = _fetchTables;
 
   return (
-    <DatabaseContext.Provider value={{
-      isConnected,
-      databaseInfo,
-      databaseTables,
-      connect,
-      disconnect,
-      fetchTables,
-      setDatabaseTables
-    }}
+    <DatabaseContext.Provider
+      value={{ isConnected, databaseInfo, databaseTables, connect, disconnect, fetchTables }}
     >
       {children}
     </DatabaseContext.Provider>
   );
-};
-
-export const useDatabase = () => {
-  const context = useContext(DatabaseContext);
-  if (!context) {
-    throw new Error('useDatabase must be used within DatabaseProvider');
-  }
-  return context;
 };

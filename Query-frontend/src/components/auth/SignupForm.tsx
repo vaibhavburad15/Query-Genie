@@ -1,12 +1,19 @@
+// src/components/auth/SignupForm.tsx
 import { useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { Eye, EyeOff, Loader2, Mail, UserPlus } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
-import axios from 'axios';
+import { apiFetch } from '@/services/apiClient';
 
 interface SignupFormProps {
   onSwitchToLogin: () => void;
@@ -20,7 +27,7 @@ const SignupForm = ({ onSwitchToLogin }: SignupFormProps) => {
     email: '',
     password: '',
     confirmPassword: '',
-    otp: ''
+    otp: '',
   });
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
@@ -46,9 +53,7 @@ const SignupForm = ({ onSwitchToLogin }: SignupFormProps) => {
       newErrors.lastName = 'Must contain only letters';
     }
 
-    if (!formData.gender) {
-      newErrors.gender = 'Please select a gender';
-    }
+    if (!formData.gender) newErrors.gender = 'Please select a gender';
 
     if (!formData.email.trim()) {
       newErrors.email = 'Email is required';
@@ -79,35 +84,30 @@ const SignupForm = ({ onSwitchToLogin }: SignupFormProps) => {
   };
 
   const handleInputChange = (field: string, value: string) => {
-    setFormData(prev => ({ ...prev, [field]: value }));
-    if (errors[field]) {
-      setErrors(prev => ({ ...prev, [field]: '' }));
-    }
+    setFormData((prev) => ({ ...prev, [field]: value }));
+    if (errors[field]) setErrors((prev) => ({ ...prev, [field]: '' }));
   };
 
   const handleSendOtp = async () => {
     if (errors.email || !formData.email.trim()) {
-      setErrors(prev => ({ ...prev, email: 'Must be a valid email address' }));
+      setErrors((prev) => ({ ...prev, email: 'Must be a valid email address' }));
       return;
     }
-
     setIsSendingOtp(true);
     try {
-      const apiUrl = `http://localhost:8000/api/send-otp` ;
-      const response = await axios.post(apiUrl, { email: formData.email });
-      if (response.data.success) {
-        setOtpSent(true);
-        toast({
-          title: "OTP Sent!",
-          description: "Please check your email for the verification code.",
-        });
-      }
-    } catch (error) {
-      toast({
-        variant: "destructive",
-        title: "Failed to Send OTP",
-        description: error.response?.data?.detail || "An unexpected error occurred.",
+      const res = await apiFetch('/api/send-otp', {
+        method: 'POST',
+        body: JSON.stringify({ email: formData.email }),
       });
+      const data = await res.json();
+      if (data.success) {
+        setOtpSent(true);
+        toast({ title: 'OTP Sent!', description: 'Please check your email for the verification code.' });
+      } else {
+        toast({ variant: 'destructive', title: 'Failed to Send OTP', description: data.detail || 'An unexpected error occurred.' });
+      }
+    } catch (error: any) {
+      toast({ variant: 'destructive', title: 'Failed to Send OTP', description: error?.message || 'An unexpected error occurred.' });
     } finally {
       setIsSendingOtp(false);
     }
@@ -115,9 +115,7 @@ const SignupForm = ({ onSwitchToLogin }: SignupFormProps) => {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-
     if (!validateForm()) return;
-
     try {
       const success = await signup({
         firstName: formData.firstName,
@@ -126,26 +124,15 @@ const SignupForm = ({ onSwitchToLogin }: SignupFormProps) => {
         email: formData.email,
         password: formData.password,
         otp: formData.otp,
-        username: formData.email.split('@')[0], 
+        username: formData.email.split('@')[0],
       });
       if (success) {
-        toast({
-          title: "Account created!",
-          description: "Welcome! You have been automatically signed in.",
-        });
+        toast({ title: 'Account created!', description: 'Welcome! You have been automatically signed in.' });
       } else {
-        toast({
-          variant: "destructive",
-          title: "Signup failed",
-          description: "Please try again.",
-        });
+        toast({ variant: 'destructive', title: 'Signup failed', description: 'Please try again.' });
       }
-    } catch (error) {
-      toast({
-        variant: "destructive",
-        title: "Error",
-        description: "An unexpected error occurred. Please try again.",
-      });
+    } catch {
+      toast({ variant: 'destructive', title: 'Error', description: 'An unexpected error occurred. Please try again.' });
     }
   };
 
@@ -165,9 +152,7 @@ const SignupForm = ({ onSwitchToLogin }: SignupFormProps) => {
               className={`focus-brand ${errors.firstName ? 'border-destructive' : ''}`}
               disabled={isLoading}
             />
-            {errors.firstName && (
-              <p className="text-sm text-destructive animate-in">{errors.firstName}</p>
-            )}
+            {errors.firstName && <p className="text-sm text-destructive animate-in">{errors.firstName}</p>}
           </div>
           <div className="space-y-2">
             <Label htmlFor="lastName" className="text-label">Last Name</Label>
@@ -180,20 +165,14 @@ const SignupForm = ({ onSwitchToLogin }: SignupFormProps) => {
               className={`focus-brand ${errors.lastName ? 'border-destructive' : ''}`}
               disabled={isLoading}
             />
-            {errors.lastName && (
-              <p className="text-sm text-destructive animate-in">{errors.lastName}</p>
-            )}
+            {errors.lastName && <p className="text-sm text-destructive animate-in">{errors.lastName}</p>}
           </div>
         </div>
 
-        {/* Gender Field */}
+        {/* Gender */}
         <div className="space-y-2">
           <Label htmlFor="gender" className="text-label">Gender</Label>
-          <Select
-            value={formData.gender}
-            onValueChange={(value) => handleInputChange('gender', value)}
-            disabled={isLoading}
-          >
+          <Select value={formData.gender} onValueChange={(v) => handleInputChange('gender', v)} disabled={isLoading}>
             <SelectTrigger className={`focus-brand ${errors.gender ? 'border-destructive' : ''}`}>
               <SelectValue placeholder="Select gender" />
             </SelectTrigger>
@@ -204,12 +183,10 @@ const SignupForm = ({ onSwitchToLogin }: SignupFormProps) => {
               <SelectItem value="Prefer not to say">Prefer not to say</SelectItem>
             </SelectContent>
           </Select>
-          {errors.gender && (
-            <p className="text-sm text-destructive animate-in">{errors.gender}</p>
-          )}
+          {errors.gender && <p className="text-sm text-destructive animate-in">{errors.gender}</p>}
         </div>
 
-        {/* Email Field with OTP */}
+        {/* Email + OTP trigger */}
         <div className="space-y-2">
           <Label htmlFor="email" className="text-label">Email</Label>
           <div className="relative">
@@ -226,29 +203,21 @@ const SignupForm = ({ onSwitchToLogin }: SignupFormProps) => {
               <button
                 type="button"
                 onClick={handleSendOtp}
-                className="absolute right-3 top-1/2 transform -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1"
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1"
                 disabled={isSendingOtp || isLoading || !!errors.email}
               >
                 {isSendingOtp ? (
-                  <>
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                    <span className="text-sm">Sending...</span>
-                  </>
+                  <><Loader2 className="w-4 h-4 animate-spin" /><span className="text-sm">Sending...</span></>
                 ) : (
-                  <>
-                    <Mail size={16} />
-                    <span className="text-sm">Get OTP</span>
-                  </>
+                  <><Mail size={16} /><span className="text-sm">Get OTP</span></>
                 )}
               </button>
             )}
           </div>
-          {errors.email && (
-            <p className="text-sm text-destructive animate-in">{errors.email}</p>
-          )}
+          {errors.email && <p className="text-sm text-destructive animate-in">{errors.email}</p>}
         </div>
 
-        {/* OTP Field (conditional) */}
+        {/* OTP */}
         {otpSent && (
           <div className="space-y-2">
             <Label htmlFor="otp" className="text-label">Verification Code (OTP)</Label>
@@ -261,13 +230,11 @@ const SignupForm = ({ onSwitchToLogin }: SignupFormProps) => {
               className={`focus-brand ${errors.otp ? 'border-destructive' : ''}`}
               disabled={isLoading}
             />
-            {errors.otp && (
-              <p className="text-sm text-destructive animate-in">{errors.otp}</p>
-            )}
+            {errors.otp && <p className="text-sm text-destructive animate-in">{errors.otp}</p>}
           </div>
         )}
 
-        {/* Password Field */}
+        {/* Password */}
         <div className="space-y-2">
           <Label htmlFor="password" className="text-label">Password</Label>
           <div className="relative">
@@ -283,18 +250,16 @@ const SignupForm = ({ onSwitchToLogin }: SignupFormProps) => {
             <button
               type="button"
               onClick={() => setShowPassword(!showPassword)}
-              className="absolute right-3 top-1/2 transform -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
               disabled={isLoading}
             >
               {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
             </button>
           </div>
-          {errors.password && (
-            <p className="text-sm text-destructive animate-in">{errors.password}</p>
-          )}
+          {errors.password && <p className="text-sm text-destructive animate-in">{errors.password}</p>}
         </div>
 
-        {/* Confirm Password Field */}
+        {/* Confirm Password */}
         <div className="space-y-2">
           <Label htmlFor="confirmPassword" className="text-label">Confirm Password</Label>
           <div className="relative">
@@ -310,38 +275,28 @@ const SignupForm = ({ onSwitchToLogin }: SignupFormProps) => {
             <button
               type="button"
               onClick={() => setShowConfirmPassword(!showConfirmPassword)}
-              className="absolute right-3 top-1/2 transform -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
               disabled={isLoading}
             >
               {showConfirmPassword ? <EyeOff size={16} /> : <Eye size={16} />}
             </button>
           </div>
-          {errors.confirmPassword && (
-            <p className="text-sm text-destructive animate-in">{errors.confirmPassword}</p>
-          )}
+          {errors.confirmPassword && <p className="text-sm text-destructive animate-in">{errors.confirmPassword}</p>}
         </div>
       </div>
 
-      {/* Submit Button */}
-      <Button 
-        type="submit" 
+      <Button
+        type="submit"
         className="w-full gradient-brand hover:shadow-brand transition-all duration-200"
         disabled={isLoading || !otpSent}
       >
         {isLoading ? (
-          <>
-            <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-            Creating Account...
-          </>
+          <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Creating Account...</>
         ) : (
-          <>
-            <UserPlus className="w-4 h-4 mr-2" />
-            Create Account
-          </>
+          <><UserPlus className="w-4 h-4 mr-2" />Create Account</>
         )}
       </Button>
 
-      {/* Switch to Login */}
       <div className="text-center">
         <p className="text-caption">
           Already have an account?{' '}
