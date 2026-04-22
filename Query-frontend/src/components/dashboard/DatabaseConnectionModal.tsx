@@ -7,14 +7,12 @@ import { Database, Loader2, CheckCircle, AlertCircle, Lightbulb, XCircle, WifiOf
 import { useToast } from '@/hooks/use-toast';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { useConnectDatabase } from '@/hooks/useQueryCache';
-
-const API_BASE = "http://localhost:8000";
+import { apiFetch } from '@/services/apiClient';
 
 interface DatabaseConnectionModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onConnect: (data: any) => void;
+  onConnect: (data: any) => Promise<void>;
 }
 
 interface DBCredentials {
@@ -58,10 +56,10 @@ export const DatabaseConnectionModal = ({ isOpen, onClose, onConnect }: Database
 
   // UI state
   const [isLoadingDatabases, setIsLoadingDatabases] = useState(false);
+  const [isConnecting, setIsConnecting] = useState(false);
   const [connectionError, setConnectionError] = useState<ConnectionError | null>(null);
   
   const { toast } = useToast();
-  const connectMutation = useConnectDatabase();
 
   const handleCredentialsChange = (field: keyof DBCredentials, value: string) => {
     setCredentials(prev => ({ ...prev, [field]: value }));
@@ -104,9 +102,8 @@ export const DatabaseConnectionModal = ({ isOpen, onClose, onConnect }: Database
     setIsLoadingDatabases(true);
 
     try {
-      const response = await fetch(`${API_BASE}/api/list-databases`, {
+      const response = await apiFetch('/api/list-databases', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           host: credentials.host.trim(),
           port: portNum,
@@ -208,9 +205,8 @@ export const DatabaseConnectionModal = ({ isOpen, onClose, onConnect }: Database
     const portNum = parseInt(credentials.port, 10);
 
     try {
-      const response = await fetch(`${API_BASE}/api/create-database`, {
+      const response = await apiFetch('/api/create-database', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           host: credentials.host.trim(),
           port: portNum,
@@ -286,55 +282,35 @@ export const DatabaseConnectionModal = ({ isOpen, onClose, onConnect }: Database
     }
 
     setConnectionError(null);
+    setIsConnecting(true);
 
     const portNum = parseInt(credentials.port, 10);
 
     try {
-      const data = await connectMutation.mutateAsync({
+      await onConnect({
+        type: 'mysql',
         host: credentials.host.trim(),
-        port: portNum,
+        port: String(portNum),
         user: credentials.user.trim(),
         password: credentials.password,
-        database: selectedDatabase
+        database: selectedDatabase,
       });
-
-      if (data.success) {
-        toast({
-          title: "✅ Connection Successful!",
-          description: `Connected to ${selectedDatabase} database successfully.`,
-          duration: 5000,
-        });
-        
-        onConnect({
-          type: 'mysql',
-          host: credentials.host,
-          port: credentials.port,
-          user: credentials.user,
-          password: credentials.password,
-          database: selectedDatabase
-        });
-        
-        handleClose();
-      } else {
-        setConnectionError({
-          error: "Connection Error",
-          message: data.error || 'Failed to connect to database',
-          code: "UNKNOWN_ERROR"
-        });
-      }
+      handleClose();
     } catch (error: any) {
       console.error('Error connecting to database:', error);
       setConnectionError({
-        error: "Network Error",
-        message: "Unable to reach the backend server.",
-        code: "NETWORK_ERROR"
+        error: "Connection Error",
+        message: error?.message || 'Failed to connect to database',
+        code: "UNKNOWN_ERROR"
       });
-      
+
       toast({
         variant: "destructive",
-        title: "Network Error",
-        description: "Cannot connect to backend server",
+        title: "Connection Failed",
+        description: error?.message || 'Could not connect to the selected database.',
       });
+    } finally {
+      setIsConnecting(false);
     }
   };
 
@@ -427,7 +403,7 @@ export const DatabaseConnectionModal = ({ isOpen, onClose, onConnect }: Database
   };
 
   const handleKeyPress = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !isLoadingDatabases && !connectMutation.isPending) {
+    if (e.key === 'Enter' && !isLoadingDatabases && !isConnecting) {
       if (currentStep === 'credentials') {
         handleListDatabases();
       } else if (selectedDatabase) {
@@ -620,7 +596,7 @@ export const DatabaseConnectionModal = ({ isOpen, onClose, onConnect }: Database
                   <Select
                     value={selectedDatabase}
                     onValueChange={setSelectedDatabase}
-                    disabled={connectMutation.isPending}
+                    disabled={isConnecting}
                   >
                     <SelectTrigger id="database" className="w-full font-mono">
                       <SelectValue placeholder="Choose a database..." />
@@ -646,7 +622,7 @@ export const DatabaseConnectionModal = ({ isOpen, onClose, onConnect }: Database
                   variant="outline"
                   className="w-full"
                   onClick={openCreateDialog}
-                  disabled={connectMutation.isPending}
+                  disabled={isConnecting}
                 >
                   <Plus className="w-4 h-4 mr-2" />
                   Create New Database
@@ -657,17 +633,17 @@ export const DatabaseConnectionModal = ({ isOpen, onClose, onConnect }: Database
                   <Button 
                     variant="outline" 
                     onClick={handleBack} 
-                    disabled={connectMutation.isPending}
+                    disabled={isConnecting}
                   >
                     <ChevronLeft className="w-4 h-4 mr-2" />
                     Back
                   </Button>
                   <Button 
                     onClick={handleConnect} 
-                    disabled={!selectedDatabase || connectMutation.isPending}
+                    disabled={!selectedDatabase || isConnecting}
                     className="min-w-[120px]"
                   >
-                    {connectMutation.isPending ? (
+                    {isConnecting ? (
                       <>
                         <Loader2 className="w-4 h-4 mr-2 animate-spin" />
                         Connecting...

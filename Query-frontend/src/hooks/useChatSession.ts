@@ -26,7 +26,7 @@ export function useChatSession() {
   const loadChatSessions = async () => {
     if (!user) return;
     try {
-      const sessions = await getChatSessions(user.id);
+      const sessions = await getChatSessions();
       console.log("Loaded chat sessions:", sessions);
       setChatSessions(sessions);
       // Do not automatically select the first chat session
@@ -39,7 +39,7 @@ export function useChatSession() {
   const createNewChat = async () => {
     if (!user) return;
     try {
-      const newSession = await createChatSession({ title: "New Chat", messages: [], user_id: user.id });
+      const newSession = await createChatSession({ title: "New Chat", messages: [] });
       setChatSessions(prev => [newSession, ...prev]);
       setCurrentChatId(newSession.id);
       setMessages([]);
@@ -59,7 +59,7 @@ export function useChatSession() {
   const persistMessages = async () => {
     if (currentChatId === null || !user) return;
     try {
-      await updateChatSession(currentChatId, { messages, user_id: user.id });
+      await updateChatSession(currentChatId, { messages });
       setChatSessions(prev =>
         prev.map(session =>
           session.id === currentChatId ? { ...session, messages } : session
@@ -104,7 +104,7 @@ export function useChatSession() {
       });
 
       // Persist only the title to the backend
-      await updateChatSession(currentChatId, { title, user_id: user.id });
+      await updateChatSession(currentChatId, { title });
       console.log("Chat renamed to:", title);
     } catch (error) {
       console.error("Failed to rename chat session:", error);

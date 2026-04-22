@@ -1,37 +1,23 @@
-// src/services/api.ts
-import axios from 'axios';
+import { apiJson } from '@/services/apiClient';
 
-// Create an axios instance with the base URL from environment variables
-const api = axios.create({
-  baseURL: import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000', 
-});
-
-
-// ---- TYPE DEFINITIONS ----
-// These should match your FastAPI Pydantic models
-
-// Matches the DBConfig model in Python
 export interface DBConfig {
   host: string;
   port: number;
   user: string;
-  password?: string; // Optional as it has a default in Python
+  password?: string;
   database: string;
 }
 
-// Represents a single message in the chat history
 export interface ChatMessage {
-  role: 'ai' | 'user'; // 'ai' for AIMessage, 'user' for HumanMessage
+  role: 'ai' | 'user';
   content: string;
 }
 
-// Matches the ChatRequest model in Python
 export interface ChatRequestPayload {
   question: string;
   chat_history: ChatMessage[];
 }
 
-// Auth types
 export interface SignupData {
   firstName: string;
   lastName: string;
@@ -54,13 +40,14 @@ export interface OtpRequest {
 export interface AuthResponse {
   success: boolean;
   message: string;
+  auth_token?: string;
   user?: {
     id: number;
     email: string;
     firstName: string;
     lastName: string;
     username: string;
-    contactNumber: string;
+    contactNumber?: string;
     gender: string;
   };
 }
@@ -70,178 +57,80 @@ export interface OtpResponse {
   message: string;
 }
 
-// ---- API FUNCTIONS ----
+export const connectToDB = async (config: DBConfig) =>
+  apiJson<{ success: boolean; error?: string; session_token?: string; database?: string }>(
+    '/api/connect',
+    {
+      method: 'POST',
+      body: JSON.stringify(config),
+    }
+  );
 
-/**
- * Connects to the database.
- * @param config - The database connection details.
- * @returns A promise that resolves with the server's response.
- */
-export const connectToDB = async (config: DBConfig) => {
-  try {
-    const { data } = await api.post('/api/connect', config);
-    return data; // Expected: { success: true } or { success: false, error: "..." }
-  } catch (error) {
-    console.error("Failed to connect to the database:", error);
-    throw error;
-  }
-};
+export const sendChatMessage = async (payload: ChatRequestPayload) =>
+  apiJson<{ success: boolean; response?: string; error?: string }>('/api/chat', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
 
-/**
- * Sends a message to the chat endpoint.
- * @param payload - The question and chat history.
- * @returns A promise that resolves with the AI's response.
- */
-export const sendChatMessage = async (payload: ChatRequestPayload) => {
-  try {
-    const { data } = await api.post('/api/chat', payload);
-    return data; // Expected: { success: true, response: "..." } or { success: false, error: "..." }
-  } catch (error) {
-    console.error("Failed to send chat message:", error);
-    throw error;
-  }
-};
+export const getChatSessions = async (_userId?: number) =>
+  apiJson<any[]>('/api/chat-sessions');
 
-/**
- * Fetches all chat sessions for the authenticated user.
- * @param userId - The ID of the user.
- * @returns A promise that resolves with an array of chat sessions.
- */
-export const getChatSessions = async (userId: number) => {
-  try {
-    const { data } = await api.get(`/api/chat-sessions?user_id=${userId}`);
-    return data; // Expected: array of chat sessions
-  } catch (error) {
-    console.error("Failed to fetch chat sessions:", error);
-    throw error;
-  }
-};
+export const createChatSession = async (session: {
+  title: string;
+  messages: ChatMessage[];
+  user_id?: number;
+}) =>
+  apiJson<any>('/api/chat-sessions', {
+    method: 'POST',
+    body: JSON.stringify(session),
+  });
 
-/**
- * Creates a new chat session.
- * @param session - The chat session data including title, messages, and user_id.
- * @returns A promise that resolves with the created chat session.
- */
-export const createChatSession = async (session: { title: string; messages: ChatMessage[]; user_id: number }) => {
-  try {
-    const { data } = await api.post('/api/chat-sessions', session);
-    return data; // Expected: created chat session object
-  } catch (error) {
-    console.error("Failed to create chat session:", error);
-    throw error;
-  }
-};
+export const deleteChatSession = async (sessionId: number, userId?: number) =>
+  apiJson<{ success: boolean; message: string }>(
+    `/api/chat-sessions/${sessionId}${userId ? `?user_id=${userId}` : ''}`,
+    { method: 'DELETE' }
+  );
 
-/**
- * Deletes a chat session by ID.
- * @param sessionId - The ID of the chat session to delete.
- * @param userId - The ID of the user.
- * @returns A promise that resolves when deletion is complete.
- */
-export const deleteChatSession = async (sessionId: number, userId: number) => {
-  try {
-    const { data } = await api.delete(`/api/chat-sessions/${sessionId}?user_id=${userId}`);
-    return data; // Expected: success confirmation
-  } catch (error) {
-    console.error("Failed to delete chat session:", error);
-    throw error;
-  }
-};
-
-/**
- * Updates a chat session by ID.
- * @param sessionId - The ID of the chat session to update.
- * @param updatedSession - The updated session data including messages and user_id.
- * @returns A promise that resolves with the updated chat session.
- */
 export const updateChatSession = async (
   sessionId: number,
   updatedSession: {
     title?: string;
     messages?: any[];
-    user_id: number
+    user_id?: number;
   }
-) => {
-  try {
-    const { data } = await api.put(`/api/chat-sessions/${sessionId}`, updatedSession);
-    return data; // Expected: updated chat session object
-  } catch (error) {
-    console.error("Failed to update chat session:", error);
-    throw error;
-  }
-};
+) =>
+  apiJson<any>(`/api/chat-sessions/${sessionId}`, {
+    method: 'PUT',
+    body: JSON.stringify(updatedSession),
+  });
 
-/**
- * Deletes all chat sessions for a user.
- * @param userId - The ID of the user.
- * @returns A promise that resolves when deletion is complete.
- */
-export const deleteAllChatSessions = async (userId: number) => {
-  try {
-    const { data } = await api.delete(`/api/chat-sessions/delete-all?user_id=${userId}`);
-    return data; // Expected: success confirmation
-  } catch (error) {
-    console.error("Failed to delete all chat sessions:", error);
-    throw error;
-  }
-};
+export const deleteAllChatSessions = async (_userId?: number) =>
+  apiJson<{ success: boolean; message: string }>('/api/chat-sessions/delete-all', {
+    method: 'DELETE',
+  });
 
-/**
- * Sends OTP to the user's email for signup verification.
- * @param request - The email to send OTP to.
- * @returns A promise that resolves with the server's response.
- */
-export const sendOtp = async (request: OtpRequest): Promise<OtpResponse> => {
-  try {
-    const { data } = await api.post('/api/send-otp', request);
-    return data;
-  } catch (error) {
-    console.error("Failed to send OTP:", error);
-    throw error;
-  }
-};
+export const sendOtp = async (request: OtpRequest): Promise<OtpResponse> =>
+  apiJson<OtpResponse>('/api/send-otp', {
+    method: 'POST',
+    body: JSON.stringify(request),
+  });
 
-/**
- * Signs up a new user.
- * @param userData - The user signup data including OTP.
- * @returns A promise that resolves with the auth response.
- */
-export const signup = async (userData: SignupData): Promise<AuthResponse> => {
-  try {
-    const { data } = await api.post('/api/signup', userData);
-    return data;
-  } catch (error) {
-    console.error("Failed to signup:", error);
-    throw error;
-  }
-};
+export const signup = async (userData: SignupData): Promise<AuthResponse> =>
+  apiJson<AuthResponse>('/api/signup', {
+    method: 'POST',
+    body: JSON.stringify(userData),
+  });
 
-/**
- * Logs in a user.
- * @param credentials - The login credentials (identifier and password).
- * @returns A promise that resolves with the auth response.
- */
-export const login = async (credentials: LoginData): Promise<AuthResponse> => {
-  try {
-    const { data } = await api.post('/api/login', credentials);
-    return data;
-  } catch (error) {
-    console.error("Failed to login:", error);
-    throw error;
-  }
-};
+export const login = async (credentials: LoginData): Promise<AuthResponse> =>
+  apiJson<AuthResponse>('/api/login', {
+    method: 'POST',
+    body: JSON.stringify(credentials),
+  });
 
-/**
- * Gets user profile information.
- * @param userId - The ID of the user.
- * @returns A promise that resolves with the user profile data.
- */
-export const getUserProfile = async (userId: number): Promise<AuthResponse> => {
-  try {
-    const { data } = await api.get(`/api/profile/${userId}`);
-    return data;
-  } catch (error) {
-    console.error("Failed to get user profile:", error);
-    throw error;
-  }
-};
+export const logout = async (): Promise<{ success: boolean; message: string }> =>
+  apiJson<{ success: boolean; message: string }>('/api/logout', {
+    method: 'POST',
+  });
+
+export const getUserProfile = async (userId: number): Promise<AuthResponse> =>
+  apiJson<AuthResponse>(`/api/profile/${userId}`);

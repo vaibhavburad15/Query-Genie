@@ -75,7 +75,10 @@ const DashboardPage = () => {
   const refreshFavorites = () => setFavoritesRefreshTrigger((prev) => prev + 1);
 
   const handleConnect = async (data: DatabaseConnectionData) => {
-    await connect(data);
+    const result = await connect(data);
+    if (!result.success) {
+      throw new Error(result.error || 'Failed to connect to database');
+    }
     setIsModalOpen(false);
     await createNewChat();
     toast({ title: '✅ Connected!', description: `Connected to ${data.database} successfully.` });
