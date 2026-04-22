@@ -112,20 +112,7 @@ const ChartVisualization: React.FC<ChartVisualizationProps> = ({
   const chartData = transformData();
   const categoryColumn = getCategoryColumn();
   const numericColumns = getNumericColumns();
-
-  if (!detectChartCompatibility()) {
-    return (
-      <div className="flex items-center justify-center py-12 text-gray-500">
-        <div className="text-center">
-          <BarChart3 className="h-12 w-12 mx-auto mb-4 text-gray-400" />
-          <p className="text-lg font-medium mb-2">Chart not available</p>
-          <p className="text-sm">
-            This data doesn't contain numeric values suitable for visualization
-          </p>
-        </div>
-      </div>
-    );
-  }
+  const isChartCompatible = detectChartCompatibility();
 
   // ✅ FIXED: Export chart as PNG
   const exportChart = async () => {
@@ -195,6 +182,20 @@ const ChartVisualization: React.FC<ChartVisualizationProps> = ({
       document.body.style.overflow = 'unset';
     };
   }, [isFullscreen]);
+
+  if (!isChartCompatible) {
+    return (
+      <div className="flex items-center justify-center py-12 text-gray-500">
+        <div className="text-center">
+          <BarChart3 className="h-12 w-12 mx-auto mb-4 text-gray-400" />
+          <p className="text-lg font-medium mb-2">Chart not available</p>
+          <p className="text-sm">
+            This data doesn't contain numeric values suitable for visualization
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   const renderChart = () => {
     const commonProps = {
@@ -266,8 +267,7 @@ const ChartVisualization: React.FC<ChartVisualizationProps> = ({
           </LineChart>
         );
 
-      case 'pie':
-        // For pie chart, use first numeric column
+      case 'pie': {
         const pieData = chartData.map((item) => ({
           name: item[categoryColumn],
           value: item[numericColumns[0]],
@@ -287,7 +287,7 @@ const ChartVisualization: React.FC<ChartVisualizationProps> = ({
               fill="#8884d8"
               dataKey="value"
             >
-              {pieData.map((entry, index) => (
+              {pieData.map((_, index) => (
                 <Cell
                   key={`cell-${index}`}
                   fill={COLORS[index % COLORS.length]}
@@ -298,6 +298,7 @@ const ChartVisualization: React.FC<ChartVisualizationProps> = ({
             <Legend />
           </PieChart>
         );
+      }
 
       case 'area':
         return (
