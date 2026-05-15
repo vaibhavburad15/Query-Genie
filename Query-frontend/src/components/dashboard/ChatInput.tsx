@@ -21,6 +21,7 @@ interface ChatInputProps {
   isLoading: boolean;
   setIsLoading: (loading: boolean) => void;
   isConnected: boolean;
+  queryEnabled: boolean;
   chatSessions: any[];
   currentChatId: number | null;
   renameCurrentChat: (title: string) => void;
@@ -32,6 +33,7 @@ const ChatInput = memo(({
   isLoading, 
   setIsLoading, 
   isConnected, 
+  queryEnabled,
   chatSessions, 
   currentChatId, 
   renameCurrentChat 
@@ -46,7 +48,7 @@ const ChatInput = memo(({
   const handleRenameCurrentChat = useCallback(renameCurrentChat, [renameCurrentChat]);
 
   const handleSubmit = async () => {
-    if (!message.trim() || isLoading || !isConnected) return;
+    if (!message.trim() || isLoading || !isConnected || !queryEnabled) return;
 
     const userMessage: ChatMessage = { role: 'user', content: message };
 
@@ -122,7 +124,7 @@ const ChatInput = memo(({
 
   return (
     <div className="bg-transparent p-4">
-      {isConnected && (
+      {isConnected && queryEnabled && (
         <div className="max-w-4xl mx-auto mb-4">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
             {templates.slice(0, 4).map((template) => (
@@ -145,9 +147,15 @@ const ChatInput = memo(({
             value={message}
             onChange={(e) => setMessage(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder={isConnected ? "Ask me anything about your data..." : "Please connect to a database first"}
+            placeholder={
+              !isConnected
+                ? 'Please connect to a database first'
+                : queryEnabled
+                  ? 'Ask me anything about your data...'
+                  : 'This source supports connection metadata only right now'
+            }
             className="w-full min-h-[3rem] max-h-32 resize-none p-3 pr-24 bg-gray-700 border border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-white"
-            disabled={isLoading || !isConnected}
+            disabled={isLoading || !isConnected || !queryEnabled}
           />
           <div className="absolute right-2 bottom-2 flex items-center gap-1">
             <Button
@@ -155,7 +163,7 @@ const ChatInput = memo(({
               variant="ghost"
               size="icon"
               className="h-8 w-8"
-              disabled={isLoading || !isConnected}
+              disabled={isLoading || !isConnected || !queryEnabled}
             >
               <Plus size={18} />
             </Button>
@@ -163,7 +171,7 @@ const ChatInput = memo(({
               type="submit"
               size="icon"
               className="h-8 w-8 bg-blue-600 hover:bg-blue-700"
-              disabled={!message.trim() || isLoading || !isConnected}
+              disabled={!message.trim() || isLoading || !isConnected || !queryEnabled}
             >
               {isLoading ? (
                 <Loader2 size={16} className="animate-spin" />
@@ -184,6 +192,7 @@ const ChatInput = memo(({
   return (
     prevProps.isLoading === nextProps.isLoading &&
     prevProps.isConnected === nextProps.isConnected &&
+    prevProps.queryEnabled === nextProps.queryEnabled &&
     prevProps.currentChatId === nextProps.currentChatId &&
     prevProps.chatSessions === nextProps.chatSessions
   );

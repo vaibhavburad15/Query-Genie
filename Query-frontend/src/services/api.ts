@@ -1,11 +1,13 @@
 import { apiJson } from '@/services/apiClient';
 
 export interface DBConfig {
+  type: string;
   host: string;
-  port: number;
-  user: string;
+  port?: number;
+  user?: string;
   password?: string;
   database: string;
+  path?: string;
 }
 
 export interface ChatMessage {

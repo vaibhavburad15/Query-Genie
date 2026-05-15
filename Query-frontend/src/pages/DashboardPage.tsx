@@ -1,17 +1,14 @@
-// src/pages/DashboardPage.tsx
 import React, { Suspense, lazy } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useToast } from '@/hooks/use-toast';
 import { useChatSession } from '@/hooks/useChatSession';
 import { useAuth } from '@/contexts/AuthContext';
-import { useDatabase } from '@/contexts/DatabaseContext';
+import { ConnectDatabasePayload, useDatabase } from '@/contexts/DatabaseContext';
 import { LoadingSpinner } from '@/components/ui/loading-spinner';
 import Sidebar from '@/components/dashboard/Sidebar';
 import ChatInput from '@/components/dashboard/ChatInput';
-import { apiFetch } from '@/services/apiClient';
 
 const ChatWindow = lazy(() => import('@/components/dashboard/ChatWindow'));
-const UserProfile = lazy(() => import('@/components/dashboard/UserProfile'));
 const DatabaseConnectionModal = lazy(() =>
   import('@/components/dashboard/DatabaseConnectionModal').then((m) => ({
     default: m.DatabaseConnectionModal,
@@ -23,21 +20,11 @@ const ChatWindowSkeleton = lazy(() =>
   }))
 );
 
-type DatabaseConnectionData = {
-  type: string;
-  host: string;
-  port: string;
-  user: string;
-  password: string;
-  database: string;
-};
-
 const DashboardPage = () => {
   const { toast } = useToast();
   const { user } = useAuth();
   const navigate = useNavigate();
 
-  // Guard: never proceed without a real user id
   const userId = user?.id;
   React.useEffect(() => {
     if (!userId) {
@@ -45,14 +32,7 @@ const DashboardPage = () => {
     }
   }, [userId, navigate]);
 
-  const {
-    isConnected,
-    databaseInfo,
-    databaseTables,
-    connect,
-    disconnect,
-    fetchTables,
-  } = useDatabase();
+  const { isConnected, databaseInfo, databaseTables, connect, disconnect } = useDatabase();
 
   const {
     chatSessions,
@@ -61,7 +41,6 @@ const DashboardPage = () => {
     createNewChat,
     selectChat,
     deleteChat,
-    deleteAllChats,
     setMessages,
     renameCurrentChat,
   } = useChatSession();
@@ -69,31 +48,43 @@ const DashboardPage = () => {
   const [isSidebarCollapsed, setIsSidebarCollapsed] = React.useState(false);
   const [isLoading, setIsLoading] = React.useState(false);
   const [isModalOpen, setIsModalOpen] = React.useState(false);
-  const [isSettingsOpen, setIsSettingsOpen] = React.useState(false);
   const [favoritesRefreshTrigger, setFavoritesRefreshTrigger] = React.useState(0);
 
   const refreshFavorites = () => setFavoritesRefreshTrigger((prev) => prev + 1);
 
-  const handleConnect = async (data: DatabaseConnectionData) => {
+  const handleConnect = async (data: ConnectDatabasePayload) => {
     const result = await connect(data);
     if (!result.success) {
       throw new Error(result.error || 'Failed to connect to database');
     }
+
     setIsModalOpen(false);
     await createNewChat();
-    toast({ title: '✅ Connected!', description: `Connected to ${data.database} successfully.` });
+    toast({
+      title: 'Connected',
+      description: `Connected to ${data.database || data.file?.name || 'your source'} successfully.`,
+    });
   };
 
   const handleNewChat = async () => {
     if (!isConnected) {
-      toast({ title: 'Database not connected', description: 'Please connect to a database first.', variant: 'destructive' });
+      toast({
+        title: 'Database not connected',
+        description: 'Please connect to a database first.',
+        variant: 'destructive',
+      });
       return;
     }
+
     try {
       await createNewChat();
       toast({ title: 'New Chat Started', description: 'Ask a question to begin.' });
     } catch {
-      toast({ title: 'Error creating new chat', description: 'Could not create new chat session.', variant: 'destructive' });
+      toast({
+        title: 'Error creating new chat',
+        description: 'Could not create new chat session.',
+        variant: 'destructive',
+      });
     }
   };
 
@@ -102,19 +93,21 @@ const DashboardPage = () => {
       await deleteChat(chatId);
       toast({ title: 'Chat Deleted', description: 'Chat session has been deleted.' });
     } catch {
-      toast({ title: 'Error deleting chat', description: 'Could not delete chat session.', variant: 'destructive' });
+      toast({
+        title: 'Error deleting chat',
+        description: 'Could not delete chat session.',
+        variant: 'destructive',
+      });
     }
   };
 
-  // Write SQL execution is disabled until the backend implements
-  // server-side pending-action IDs with proper audit logging.
   const handleConfirmSql = async (_sql: string) => {
     setMessages((prev: any[]) => [
       ...prev,
       {
         role: 'assistant',
         type: 'assistant',
-        content: '⚠️ Write operations are temporarily disabled for security reasons.',
+        content: 'Write operations are temporarily disabled for security reasons.',
         timestamp: new Date().toISOString(),
       },
     ]);
@@ -126,7 +119,7 @@ const DashboardPage = () => {
       {
         role: 'assistant',
         type: 'assistant',
-        content: '❌ SQL execution cancelled by user.',
+        content: 'SQL execution cancelled by user.',
         timestamp: new Date().toISOString(),
       },
     ]);
@@ -135,13 +128,22 @@ const DashboardPage = () => {
   const handleDeleteConnection = async () => {
     try {
       await disconnect();
-      toast({ title: 'Database Disconnected', description: 'Successfully disconnected from the database.' });
+      toast({
+        title: 'Database Disconnected',
+        description: 'Successfully disconnected from the database.',
+      });
     } catch {
-      toast({ title: 'Error disconnecting', description: 'Could not disconnect.', variant: 'destructive' });
+      toast({
+        title: 'Error disconnecting',
+        description: 'Could not disconnect.',
+        variant: 'destructive',
+      });
     }
   };
 
-  if (!userId) return null;
+  if (!userId) {
+    return null;
+  }
 
   return (
     <div className="h-screen flex flex-col bg-background">
@@ -151,6 +153,7 @@ const DashboardPage = () => {
           onToggleCollapse={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
           isConnected={isConnected}
           connectedDatabase={databaseInfo?.database || null}
+          databaseType={databaseInfo?.type || null}
           onOpenModal={() => setIsModalOpen(true)}
           onNewChat={handleNewChat}
           onDeleteConnection={handleDeleteConnection}
@@ -159,7 +162,7 @@ const DashboardPage = () => {
           onChatSelect={selectChat}
           onDeleteChat={handleDeleteChat}
           userId={userId}
-          onOpenSettings={() => setIsSettingsOpen(true)}
+          onOpenSettings={() => undefined}
           favoritesRefreshTrigger={favoritesRefreshTrigger}
         />
 
@@ -181,6 +184,7 @@ const DashboardPage = () => {
               onFavoriteToggle={refreshFavorites}
               isConnected={isConnected}
               connectedDatabase={databaseInfo?.database || ''}
+              databaseType={databaseInfo?.type || ''}
               databaseTables={databaseTables}
             />
           </Suspense>
@@ -194,6 +198,7 @@ const DashboardPage = () => {
             chatSessions={chatSessions}
             currentChatId={currentChatId}
             renameCurrentChat={renameCurrentChat}
+            queryEnabled={databaseInfo?.supportsQuery ?? false}
           />
         </div>
       </div>
