@@ -63,7 +63,7 @@ export async function apiFetch(
   }
 
   // Only set Content-Type for requests with a body, and only if not already set
-  if (options.body && !headers['Content-Type']) {
+  if (options.body && !(options.body instanceof FormData) && !headers['Content-Type']) {
     headers['Content-Type'] = 'application/json';
   }
 

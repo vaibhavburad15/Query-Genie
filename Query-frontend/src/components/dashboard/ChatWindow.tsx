@@ -95,6 +95,7 @@ interface ChatWindowProps {
   onFavoriteToggle?: () => void;
   isConnected?: boolean;
   connectedDatabase?: string;
+  databaseType?: string;
   databaseTables?: Array<{ name: string; rowCount: number; lastUpdated: string }>;
 }
 
@@ -111,6 +112,7 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(
     onFavoriteToggle,
     isConnected = false,
     connectedDatabase = '',
+    databaseType = '',
     databaseTables = [],
   }) => {
     const [sqlVisibility, setSqlVisibility] = useState<Record<string, boolean>>({});
@@ -259,6 +261,11 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(
                     <span className="text-sm font-medium text-gray-700">
                       Connected to {connectedDatabase}
                     </span>
+                    {databaseType && (
+                      <span className="text-xs bg-slate-100 px-2 py-1 rounded-full text-slate-700 font-medium">
+                        {databaseType}
+                      </span>
+                    )}
                     <span className="text-xs bg-white/80 px-2 py-1 rounded-full text-gray-600 font-semibold">
                       {databaseTables.length} tables
                     </span>
@@ -295,7 +302,9 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(
                             </div>
                           </div>
                           <h3 className="text-lg font-bold text-gray-900 mb-3">Connect Your Database</h3>
-                          <p className="text-gray-600 leading-relaxed">Securely link to MySQL...</p>
+                          <p className="text-gray-600 leading-relaxed">
+                            Connect to SQL databases, spreadsheets, or metadata sources in one place.
+                          </p>
                         </div>
                       </div>
 
@@ -622,6 +631,7 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(
     prev.messages === next.messages &&
     prev.isConnected === next.isConnected &&
     prev.connectedDatabase === next.connectedDatabase &&
+    prev.databaseType === next.databaseType &&
     prev.databaseTables === next.databaseTables &&
     prev.userId === next.userId &&
     prev.currentQuestion === next.currentQuestion

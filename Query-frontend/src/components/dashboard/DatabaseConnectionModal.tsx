@@ -1,99 +1,196 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
-import { Database, Loader2, CheckCircle, AlertCircle, Lightbulb, XCircle, WifiOff, Lock, Server, ChevronRight, ChevronLeft, Plus } from 'lucide-react';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import {
+  AlertCircle,
+  CheckCircle,
+  ChevronLeft,
+  ChevronRight,
+  Database,
+  FileSpreadsheet,
+  FolderUp,
+  Loader2,
+  Plus,
+  Server,
+} from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { apiFetch } from '@/services/apiClient';
+import {
+  DATABASE_SOURCES,
+  DEFAULT_DATABASE_SOURCE,
+  getDatabaseSource,
+} from '@/lib/dataSources';
+import { ConnectDatabasePayload } from '@/contexts/DatabaseContext';
 
 interface DatabaseConnectionModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onConnect: (data: any) => Promise<void>;
+  onConnect: (data: ConnectDatabasePayload) => Promise<void>;
 }
 
-interface DBCredentials {
+interface ConnectionFormState {
+  type: string;
   host: string;
   port: string;
   user: string;
   password: string;
+  database: string;
+  path: string;
+  file: File | null;
 }
 
 interface ConnectionError {
-  success?: boolean;
   error: string;
   message: string;
   suggestion?: string;
-  code: string;
+  code?: string;
 }
 
-type ConnectionStep = 'credentials' | 'database-selection';
+type ConnectionStep = 'details' | 'database-selection';
 
-export const DatabaseConnectionModal = ({ isOpen, onClose, onConnect }: DatabaseConnectionModalProps) => {
-  // Step management
-  const [currentStep, setCurrentStep] = useState<ConnectionStep>('credentials');
-  
-  // Credentials state
-  const [credentials, setCredentials] = useState<DBCredentials>({
-    host: '127.0.0.1',
-    port: '3306',
-    user: 'root',
-    password: '',
-  });
+const TYPE_DEFAULTS: Record<
+  string,
+  Pick<ConnectionFormState, 'host' | 'port' | 'user' | 'database' | 'path'>
+> = {
+  mysql: { host: '127.0.0.1', port: '3306', user: 'root', database: '', path: '' },
+  postgresql: { host: '127.0.0.1', port: '5432', user: 'postgres', database: '', path: '' },
+  mariadb: { host: '127.0.0.1', port: '3306', user: 'root', database: '', path: '' },
+  oracle: { host: '127.0.0.1', port: '1521', user: '', database: '', path: '' },
+  sqlserver: { host: '127.0.0.1', port: '1433', user: 'sa', database: '', path: '' },
+  db2: { host: '127.0.0.1', port: '50000', user: '', database: '', path: '' },
+  sqlite: { host: '', port: '', user: '', database: '', path: '' },
+  mongodb: { host: '127.0.0.1', port: '27017', user: '', database: '', path: '' },
+  redis: { host: '127.0.0.1', port: '6379', user: '', database: '0', path: '' },
+  csv: { host: '', port: '', user: '', database: '', path: '' },
+  excel: { host: '', port: '', user: '', database: '', path: '' },
+};
 
-  // Database selection state
+const createInitialState = (): ConnectionFormState => ({
+  type: DEFAULT_DATABASE_SOURCE.type,
+  host: TYPE_DEFAULTS.mysql.host,
+  port: TYPE_DEFAULTS.mysql.port,
+  user: TYPE_DEFAULTS.mysql.user,
+  password: '',
+  database: '',
+  path: '',
+  file: null,
+});
+
+export const DatabaseConnectionModal = ({
+  isOpen,
+  onClose,
+  onConnect,
+}: DatabaseConnectionModalProps) => {
+  const { toast } = useToast();
+  const [currentStep, setCurrentStep] = useState<ConnectionStep>('details');
+  const [form, setForm] = useState<ConnectionFormState>(createInitialState);
   const [availableDatabases, setAvailableDatabases] = useState<string[]>([]);
-  const [selectedDatabase, setSelectedDatabase] = useState<string>('');
-
-  // Create database state
+  const [selectedDatabase, setSelectedDatabase] = useState('');
   const [showCreateDialog, setShowCreateDialog] = useState(false);
   const [newDatabaseName, setNewDatabaseName] = useState('');
-  const [isCreatingDatabase, setIsCreatingDatabase] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
-
-  // UI state
+  const [connectionError, setConnectionError] = useState<ConnectionError | null>(null);
   const [isLoadingDatabases, setIsLoadingDatabases] = useState(false);
   const [isConnecting, setIsConnecting] = useState(false);
-  const [connectionError, setConnectionError] = useState<ConnectionError | null>(null);
-  
-  const { toast } = useToast();
+  const [isCreatingDatabase, setIsCreatingDatabase] = useState(false);
 
-  const handleCredentialsChange = (field: keyof DBCredentials, value: string) => {
-    setCredentials(prev => ({ ...prev, [field]: value }));
-    if (connectionError) {
-      setConnectionError(null);
+  const source = useMemo(() => getDatabaseSource(form.type), [form.type]);
+
+  const updateForm = (field: keyof ConnectionFormState, value: string | File | null) => {
+    setForm((prev) => ({ ...prev, [field]: value }));
+    setConnectionError(null);
+  };
+
+  const handleSourceChange = (type: string) => {
+    const defaults = TYPE_DEFAULTS[type] ?? TYPE_DEFAULTS.mysql;
+    setForm((prev) => ({
+      ...prev,
+      type,
+      host: defaults.host,
+      port: defaults.port,
+      user: defaults.user,
+      password: '',
+      database: defaults.database,
+      path: defaults.path,
+      file: null,
+    }));
+    setCurrentStep('details');
+    setAvailableDatabases([]);
+    setSelectedDatabase('');
+    setConnectionError(null);
+    setCreateError(null);
+  };
+
+  const buildServerPayload = () => ({
+    type: form.type,
+    host: form.host.trim(),
+    port: form.port ? parseInt(form.port, 10) : undefined,
+    user: form.user.trim(),
+    password: form.password,
+  });
+
+  const validateDetails = (forListing: boolean) => {
+    if (source.category === 'file') {
+      if (!form.file) {
+        throw new Error(`Please choose a ${source.shortLabel} file to upload.`);
+      }
+      return;
+    }
+
+    if (source.type === 'sqlite') {
+      if (!form.path.trim()) {
+        throw new Error('Please enter the SQLite file path.');
+      }
+      return;
+    }
+
+    if (!form.host.trim()) {
+      throw new Error('Please enter the server host.');
+    }
+
+    if (source.defaultPort) {
+      const portNum = parseInt(form.port, 10);
+      if (Number.isNaN(portNum) || portNum < 1 || portNum > 65535) {
+        throw new Error('Port must be a number between 1 and 65535.');
+      }
+    }
+
+    if (forListing) {
+      if (source.type !== 'redis' && !form.user.trim() && source.type !== 'mongodb') {
+        throw new Error('Please enter the database username.');
+      }
+      return;
+    }
+
+    if (!source.supportsListing && !form.database.trim() && source.type !== 'redis') {
+      throw new Error(`Please enter the ${source.databaseLabel.toLowerCase()}.`);
     }
   };
 
   const handleListDatabases = async () => {
-    // Validate credentials
-    if (!credentials.host.trim()) {
+    try {
+      validateDetails(true);
+    } catch (error: any) {
       toast({
-        variant: "destructive",
-        title: "Host Required",
-        description: "Please enter the database host",
-      });
-      return;
-    }
-
-    if (!credentials.user.trim()) {
-      toast({
-        variant: "destructive",
-        title: "Username Required",
-        description: "Please enter your database username",
-      });
-      return;
-    }
-
-    const portNum = parseInt(credentials.port, 10);
-    if (isNaN(portNum) || portNum < 1 || portNum > 65535) {
-      toast({
-        variant: "destructive",
-        title: "Invalid Port",
-        description: "Port must be a number between 1 and 65535",
+        variant: 'destructive',
+        title: 'Missing Details',
+        description: error.message,
       });
       return;
     }
@@ -104,179 +201,67 @@ export const DatabaseConnectionModal = ({ isOpen, onClose, onConnect }: Database
     try {
       const response = await apiFetch('/api/list-databases', {
         method: 'POST',
-        body: JSON.stringify({
-          host: credentials.host.trim(),
-          port: portNum,
-          user: credentials.user.trim(),
-          password: credentials.password
-        })
+        body: JSON.stringify(buildServerPayload()),
       });
-
       const data = await response.json();
 
-      if (!response.ok) {
-        if (data.detail && typeof data.detail === 'object') {
-          setConnectionError(data.detail);
-          
-          if (data.detail.code === 'AUTH_FAILED') {
-            toast({
-              variant: "destructive",
-              title: "Authentication Failed",
-              description: "Please check your username and password",
-            });
-          } else if (data.detail.code === 'CONNECTION_REFUSED') {
-            toast({
-              variant: "destructive",
-              title: "Connection Refused",
-              description: "Cannot connect to MySQL server",
-            });
-          }
-        } else {
-          setConnectionError({
-            error: "Connection Error",
-            message: data.message || 'Failed to connect to MySQL server.',
-            code: "UNKNOWN_ERROR"
-          });
-        }
+      if (!response.ok || !data.success) {
+        setConnectionError({
+          error: data.error || 'Connection Error',
+          message: data.message || data.error || 'Unable to list available databases.',
+          suggestion: data.suggestion,
+          code: data.code,
+        });
         return;
       }
 
-      if (data.success) {
-        setAvailableDatabases(data.databases || []);
-        setCurrentStep('database-selection');
-        toast({
-          title: "✅ Server Connected",
-          description: `Found ${data.databases?.length || 0} database(s)`,
-        });
-      } else {
-        setConnectionError({
-          error: "No Databases Found",
-          message: "No user databases found on this server.",
-          suggestion: "CREATE DATABASE my_database;",
-          code: "NO_DATABASES"
-        });
-      }
-    } catch (error: any) {
-      console.error('Error listing databases:', error);
-      setConnectionError({
-        error: "Network Error",
-        message: "Unable to reach the backend server. Please ensure the server is running on port 8000.",
-        suggestion: "Start the backend server using: python main.py",
-        code: "NETWORK_ERROR"
-      });
-      
+      setAvailableDatabases(data.databases || []);
+      setCurrentStep('database-selection');
       toast({
-        variant: "destructive",
-        title: "Network Error",
-        description: "Cannot connect to backend server",
+        title: 'Server Connected',
+        description: `Found ${data.databases?.length || 0} available source(s).`,
+      });
+    } catch (error: any) {
+      setConnectionError({
+        error: 'Network Error',
+        message: error?.message || 'Unable to reach the backend server.',
       });
     } finally {
       setIsLoadingDatabases(false);
     }
   };
 
-  const handleCreateDatabase = async () => {
-    // Validate database name
-    const dbName = newDatabaseName.trim();
-    
-    if (!dbName) {
-      setCreateError("Database name is required");
-      return;
-    }
-
-    if (!/^[a-zA-Z0-9_]+$/.test(dbName)) {
-      setCreateError("Database name can only contain letters, numbers, and underscores");
-      return;
-    }
-
-    if (dbName.length > 64) {
-      setCreateError("Database name must be 64 characters or less");
-      return;
-    }
-
-    if (availableDatabases.includes(dbName)) {
-      setCreateError(`Database '${dbName}' already exists`);
-      return;
-    }
-
-    setCreateError(null);
-    setIsCreatingDatabase(true);
-
-    const portNum = parseInt(credentials.port, 10);
-
-    try {
-      const response = await apiFetch('/api/create-database', {
-        method: 'POST',
-        body: JSON.stringify({
-          host: credentials.host.trim(),
-          port: portNum,
-          user: credentials.user.trim(),
-          password: credentials.password,
-          database_name: dbName
-        })
-      });
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        if (data.detail && typeof data.detail === 'object') {
-          setCreateError(data.detail.message || 'Failed to create database');
-          
-          if (data.detail.code === 'PERMISSION_DENIED') {
-            toast({
-              variant: "destructive",
-              title: "Permission Denied",
-              description: "Your MySQL user doesn't have permission to create databases",
-            });
-          } else if (data.detail.code === 'DATABASE_EXISTS') {
-            toast({
-              variant: "destructive",
-              title: "Database Already Exists",
-              description: `Database '${dbName}' already exists`,
-            });
-          }
-        } else {
-          setCreateError(data.message || 'Failed to create database');
-        }
-        return;
-      }
-
-      if (data.success) {
-        toast({
-          title: "✅ Database Created!",
-          description: `Database '${dbName}' created successfully`,
-          duration: 3000,
-        });
-
-        // Refresh database list and select the new database
-        setAvailableDatabases(prev => [...prev, dbName].sort());
-        setSelectedDatabase(dbName);
-        
-        // Close create dialog and reset
-        setShowCreateDialog(false);
-        setNewDatabaseName('');
-        setCreateError(null);
-      }
-    } catch (error: any) {
-      console.error('Error creating database:', error);
-      setCreateError("Network error: Unable to create database");
-      
-      toast({
-        variant: "destructive",
-        title: "Network Error",
-        description: "Cannot connect to backend server",
-      });
-    } finally {
-      setIsCreatingDatabase(false);
-    }
-  };
+  const buildDirectConnectPayload = (): ConnectDatabasePayload => ({
+    type: form.type,
+    host: form.host.trim(),
+    port: form.port,
+    user: form.user.trim(),
+    password: form.password,
+    database:
+      source.category === 'file'
+        ? form.file?.name || form.database || source.shortLabel
+        : form.database.trim(),
+    path: form.path.trim(),
+    file: form.file,
+  });
 
   const handleConnect = async () => {
-    if (!selectedDatabase) {
+    try {
+      validateDetails(false);
+    } catch (error: any) {
       toast({
-        variant: "destructive",
-        title: "Database Required",
-        description: "Please select a database to connect to",
+        variant: 'destructive',
+        title: 'Missing Details',
+        description: error.message,
+      });
+      return;
+    }
+
+    if (source.supportsListing && !selectedDatabase) {
+      toast({
+        variant: 'destructive',
+        title: 'Database Required',
+        description: 'Please select a database to connect to.',
       });
       return;
     }
@@ -284,50 +269,85 @@ export const DatabaseConnectionModal = ({ isOpen, onClose, onConnect }: Database
     setConnectionError(null);
     setIsConnecting(true);
 
-    const portNum = parseInt(credentials.port, 10);
-
     try {
-      await onConnect({
-        type: 'mysql',
-        host: credentials.host.trim(),
-        port: String(portNum),
-        user: credentials.user.trim(),
-        password: credentials.password,
-        database: selectedDatabase,
-      });
+      await onConnect(
+        source.supportsListing
+          ? {
+              type: form.type,
+              host: form.host.trim(),
+              port: form.port,
+              user: form.user.trim(),
+              password: form.password,
+              database: selectedDatabase,
+            }
+          : buildDirectConnectPayload()
+      );
       handleClose();
     } catch (error: any) {
-      console.error('Error connecting to database:', error);
       setConnectionError({
-        error: "Connection Error",
-        message: error?.message || 'Failed to connect to database',
-        code: "UNKNOWN_ERROR"
+        error: 'Connection Error',
+        message: error?.message || 'Failed to connect to the selected source.',
       });
-
       toast({
-        variant: "destructive",
-        title: "Connection Failed",
-        description: error?.message || 'Could not connect to the selected database.',
+        variant: 'destructive',
+        title: 'Connection Failed',
+        description: error?.message || 'Could not connect to the selected source.',
       });
     } finally {
       setIsConnecting(false);
     }
   };
 
+  const handleCreateDatabase = async () => {
+    const dbName = newDatabaseName.trim();
+
+    if (!dbName) {
+      setCreateError('Database name is required.');
+      return;
+    }
+
+    setCreateError(null);
+    setIsCreatingDatabase(true);
+
+    try {
+      const response = await apiFetch('/api/create-database', {
+        method: 'POST',
+        body: JSON.stringify({
+          ...buildServerPayload(),
+          database_name: dbName,
+        }),
+      });
+      const data = await response.json();
+
+      if (!response.ok || !data.success) {
+        setCreateError(data.message || data.error || 'Failed to create database.');
+        return;
+      }
+
+      setAvailableDatabases((prev) => [...prev, dbName].sort());
+      setSelectedDatabase(dbName);
+      setNewDatabaseName('');
+      setShowCreateDialog(false);
+      toast({
+        title: 'Database Created',
+        description: `${dbName} is ready to use.`,
+      });
+    } catch (error: any) {
+      setCreateError(error?.message || 'Failed to create database.');
+    } finally {
+      setIsCreatingDatabase(false);
+    }
+  };
+
   const handleBack = () => {
-    setCurrentStep('credentials');
+    setCurrentStep('details');
     setSelectedDatabase('');
     setConnectionError(null);
   };
 
   const handleClose = () => {
-    setCurrentStep('credentials');
-    setCredentials({
-      host: '127.0.0.1',
-      port: '3306',
-      user: 'root',
-      password: ''
-    });
+    setCurrentStep('details');
+    setForm(createInitialState());
     setAvailableDatabases([]);
     setSelectedDatabase('');
     setConnectionError(null);
@@ -337,320 +357,281 @@ export const DatabaseConnectionModal = ({ isOpen, onClose, onConnect }: Database
     onClose();
   };
 
-  const openCreateDialog = () => {
-    setShowCreateDialog(true);
-    setNewDatabaseName('');
-    setCreateError(null);
-  };
+  const renderSourceDetails = () => {
+    if (source.category === 'file') {
+      return (
+        <>
+          <div className="space-y-2">
+            <Label htmlFor="source-file">{source.databaseLabel}</Label>
+            <Input
+              id="source-file"
+              type="file"
+              accept={source.fileAccept}
+              disabled={isConnecting}
+              onChange={(event) => {
+                const file = event.target.files?.[0] ?? null;
+                updateForm('file', file);
+                updateForm('database', file?.name || '');
+              }}
+            />
+            <p className="text-xs text-muted-foreground">{source.helperText}</p>
+          </div>
 
-  const closeCreateDialog = () => {
-    setShowCreateDialog(false);
-    setNewDatabaseName('');
-    setCreateError(null);
-  };
-
-  // Get appropriate icon based on error code
-  const getErrorIcon = () => {
-    if (!connectionError) return null;
-    
-    switch (connectionError.code) {
-      case 'DATABASE_NOT_FOUND':
-      case 'NO_DATABASES':
-        return <Database className="h-5 w-5" />;
-      case 'AUTH_FAILED':
-        return <Lock className="h-5 w-5" />;
-      case 'CONNECTION_REFUSED':
-        return <Server className="h-5 w-5" />;
-      case 'CONNECTION_TIMEOUT':
-        return <WifiOff className="h-5 w-5" />;
-      case 'HOST_NOT_FOUND':
-        return <XCircle className="h-5 w-5" />;
-      case 'NETWORK_ERROR':
-        return <WifiOff className="h-5 w-5" />;
-      default:
-        return <AlertCircle className="h-5 w-5" />;
+          {form.file && (
+            <div className="rounded-md border border-border bg-muted/40 px-3 py-2 text-sm">
+              Selected file: <span className="font-medium">{form.file.name}</span>
+            </div>
+          )}
+        </>
+      );
     }
-  };
 
-  const getErrorVariant = (): "default" | "destructive" => {
-    if (!connectionError) return "default";
-    
-    switch (connectionError.code) {
-      case 'DATABASE_NOT_FOUND':
-      case 'HOST_NOT_FOUND':
-      case 'NO_DATABASES':
-        return "default";
-      default:
-        return "destructive";
+    if (source.type === 'sqlite') {
+      return (
+        <div className="space-y-2">
+          <Label htmlFor="sqlite-path">{source.databaseLabel}</Label>
+          <Input
+            id="sqlite-path"
+            value={form.path}
+            onChange={(event) => updateForm('path', event.target.value)}
+            placeholder={source.databasePlaceholder}
+            disabled={isConnecting}
+            className="font-mono"
+          />
+          <p className="text-xs text-muted-foreground">{source.helperText}</p>
+        </div>
+      );
     }
+
+    return (
+      <>
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <div className="space-y-2">
+            <Label htmlFor="host">Host</Label>
+            <Input
+              id="host"
+              value={form.host}
+              onChange={(event) => updateForm('host', event.target.value)}
+              placeholder="127.0.0.1"
+              disabled={isLoadingDatabases || isConnecting}
+              className="font-mono"
+            />
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="port">Port</Label>
+            <Input
+              id="port"
+              value={form.port}
+              onChange={(event) => updateForm('port', event.target.value)}
+              placeholder={source.defaultPort || ''}
+              disabled={isLoadingDatabases || isConnecting}
+              className="font-mono"
+            />
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <div className="space-y-2">
+            <Label htmlFor="user">Username</Label>
+            <Input
+              id="user"
+              value={form.user}
+              onChange={(event) => updateForm('user', event.target.value)}
+              placeholder="Enter username"
+              disabled={isLoadingDatabases || isConnecting}
+              className="font-mono"
+              autoComplete="username"
+            />
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="password">Password</Label>
+            <Input
+              id="password"
+              type="password"
+              value={form.password}
+              onChange={(event) => updateForm('password', event.target.value)}
+              placeholder="Enter password"
+              disabled={isLoadingDatabases || isConnecting}
+              autoComplete="current-password"
+            />
+          </div>
+        </div>
+
+        {!source.supportsListing && (
+          <div className="space-y-2">
+            <Label htmlFor="database-name">{source.databaseLabel}</Label>
+            <Input
+              id="database-name"
+              value={form.database}
+              onChange={(event) => updateForm('database', event.target.value)}
+              placeholder={source.databasePlaceholder}
+              disabled={isConnecting}
+              className="font-mono"
+            />
+            <p className="text-xs text-muted-foreground">{source.helperText}</p>
+          </div>
+        )}
+      </>
+    );
   };
 
-  const getErrorTitle = () => {
-    if (!connectionError) return "";
-    
-    const emojiMap: Record<string, string> = {
-      'DATABASE_NOT_FOUND': '🗄️',
-      'NO_DATABASES': '🗄️',
-      'AUTH_FAILED': '🔐',
-      'CONNECTION_REFUSED': '🚫',
-      'CONNECTION_TIMEOUT': '⏱️',
-      'HOST_NOT_FOUND': '🌐',
-      'NETWORK_ERROR': '📡',
-    };
-    
-    const emoji = emojiMap[connectionError.code] || '⚠️';
-    return `${emoji} ${connectionError.error}`;
-  };
-
-  const handleKeyPress = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !isLoadingDatabases && !isConnecting) {
-      if (currentStep === 'credentials') {
-        handleListDatabases();
-      } else if (selectedDatabase) {
-        handleConnect();
-      }
-    }
-  };
-
-  const handleCreateKeyPress = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !isCreatingDatabase) {
-      handleCreateDatabase();
-    }
-  };
-
-  const isCredentialsValid = credentials.host && credentials.port && credentials.user;
-  
   return (
     <>
-      {/* Main Connection Dialog */}
-      <Dialog open={isOpen} onOpenChange={handleClose}>
-        <DialogContent className="sm:max-w-md max-h-[90vh] overflow-y-auto">
+      <Dialog open={isOpen} onOpenChange={(open) => !open && handleClose()}>
+        <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Database className="h-5 w-5 text-primary" />
-              {currentStep === 'credentials' ? 'Connect to MySQL Server' : 'Select Database'}
+              {currentStep === 'database-selection' ? 'Select Database' : 'Connect a Data Source'}
             </DialogTitle>
             <DialogDescription>
-              {currentStep === 'credentials' 
-                ? 'Enter your MySQL server credentials to view available databases'
-                : 'Choose a database to connect to and start querying'
-              }
+              {currentStep === 'database-selection'
+                ? `Choose the ${source.shortLabel} database you want to query.`
+                : 'Pick a source type and enter the connection details that source needs.'}
             </DialogDescription>
           </DialogHeader>
 
-          {/* Error Alert */}
           {connectionError && (
-            <Alert variant={getErrorVariant()} className="animate-in slide-in-from-top-2">
-              <div className="flex items-start gap-3">
-                {getErrorIcon()}
-                <div className="flex-1 space-y-1">
-                  <AlertTitle className="text-base font-semibold">
-                    {getErrorTitle()}
-                  </AlertTitle>
-                  <AlertDescription className="text-sm leading-relaxed">
-                    {connectionError.message}
-                  </AlertDescription>
-                  
+            <Alert variant="destructive">
+              <AlertCircle className="h-4 w-4" />
+              <AlertTitle>{connectionError.error}</AlertTitle>
+              <AlertDescription>
+                <div className="space-y-2">
+                  <p>{connectionError.message}</p>
                   {connectionError.suggestion && (
-                    <div className="mt-3 p-3 bg-blue-50 dark:bg-blue-950 rounded-lg border border-blue-200 dark:border-blue-800 animate-in fade-in-50">
-                      <div className="flex items-start gap-2">
-                        <Lightbulb className="h-4 w-4 text-blue-600 dark:text-blue-400 mt-0.5 flex-shrink-0" />
-                        <div className="flex-1 space-y-2">
-                          <p className="text-xs font-semibold text-blue-900 dark:text-blue-100">
-                            💡 Solution:
-                          </p>
-                          <code className="text-xs text-blue-800 dark:text-blue-200 block bg-blue-100 dark:bg-blue-900 p-2 rounded border border-blue-200 dark:border-blue-700 font-mono whitespace-pre-wrap break-all">
-                            {connectionError.suggestion}
-                          </code>
-                        </div>
-                      </div>
-                    </div>
+                    <p className="text-xs text-muted-foreground">{connectionError.suggestion}</p>
                   )}
                 </div>
-              </div>
+              </AlertDescription>
             </Alert>
           )}
 
-          <div className="space-y-4 py-2" onKeyPress={handleKeyPress}>
-            {currentStep === 'credentials' ? (
+          <div className="space-y-4 py-2">
+            {currentStep === 'details' ? (
               <>
-                {/* Step 1: Credentials Form */}
                 <div className="space-y-2">
-                  <Label htmlFor="host" className="flex items-center gap-1">
-                    Host <span className="text-red-500">*</span>
-                  </Label>
-                  <Input 
-                    id="host" 
-                    value={credentials.host} 
-                    onChange={(e) => handleCredentialsChange('host', e.target.value)}
-                    placeholder="127.0.0.1 or localhost"
-                    disabled={isLoadingDatabases}
-                    className="font-mono"
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    Server address where MySQL is running
-                  </p>
-                </div>
-                
-                <div className="space-y-2">
-                  <Label htmlFor="port" className="flex items-center gap-1">
-                    Port <span className="text-red-500">*</span>
-                  </Label>
-                  <Input 
-                    id="port" 
-                    value={credentials.port} 
-                    onChange={(e) => handleCredentialsChange('port', e.target.value)}
-                    placeholder="3306"
-                    disabled={isLoadingDatabases}
-                    className="font-mono"
-                    type="number"
-                    min="1"
-                    max="65535"
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    MySQL server port (default: 3306)
-                  </p>
-                </div>
-                
-                <div className="space-y-2">
-                  <Label htmlFor="user" className="flex items-center gap-1">
-                    Username <span className="text-red-500">*</span>
-                  </Label>
-                  <Input 
-                    id="user" 
-                    value={credentials.user} 
-                    onChange={(e) => handleCredentialsChange('user', e.target.value)}
-                    placeholder="root"
-                    disabled={isLoadingDatabases}
-                    className="font-mono"
-                    autoComplete="username"
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    Database username for authentication
-                  </p>
-                </div>
-                
-                <div className="space-y-2">
-                  <Label htmlFor="password">Password</Label>
-                  <Input 
-                    id="password" 
-                    type="password" 
-                    value={credentials.password} 
-                    onChange={(e) => handleCredentialsChange('password', e.target.value)}
-                    placeholder="Enter password (if any)"
-                    disabled={isLoadingDatabases}
-                    autoComplete="current-password"
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    Leave blank if no password is set
-                  </p>
+                  <Label htmlFor="source-type">Source Type</Label>
+                  <Select value={form.type} onValueChange={handleSourceChange}>
+                    <SelectTrigger id="source-type">
+                      <SelectValue placeholder="Choose a source type" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {DATABASE_SOURCES.map((item) => (
+                        <SelectItem key={item.type} value={item.type}>
+                          {item.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">{source.helperText}</p>
                 </div>
 
-                {/* Action Buttons */}
-                <div className="flex justify-end gap-2 pt-4 border-t">
-                  <Button 
-                    variant="outline" 
-                    onClick={handleClose} 
-                    disabled={isLoadingDatabases}
-                  >
+                {renderSourceDetails()}
+
+                {!source.supportsChat && (
+                  <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+                    Query Genie can connect and inspect this source, but natural-language query execution is
+                    not enabled for it yet.
+                  </div>
+                )}
+
+                <div className="flex justify-end gap-2 border-t pt-4">
+                  <Button variant="outline" onClick={handleClose} disabled={isLoadingDatabases || isConnecting}>
                     Cancel
                   </Button>
-                  <Button 
-                    onClick={handleListDatabases} 
-                    disabled={!isCredentialsValid || isLoadingDatabases}
-                    className="min-w-[140px]"
-                  >
-                    {isLoadingDatabases ? (
-                      <>
-                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                        Loading...
-                      </>
-                    ) : (
-                      <>
-                        List Databases
-                        <ChevronRight className="w-4 h-4 ml-2" />
-                      </>
-                    )}
-                  </Button>
+                  {source.supportsListing ? (
+                    <Button onClick={handleListDatabases} disabled={isLoadingDatabases || isConnecting}>
+                      {isLoadingDatabases ? (
+                        <>
+                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                          Loading
+                        </>
+                      ) : (
+                        <>
+                          List Databases
+                          <ChevronRight className="ml-2 h-4 w-4" />
+                        </>
+                      )}
+                    </Button>
+                  ) : (
+                    <Button onClick={handleConnect} disabled={isConnecting}>
+                      {isConnecting ? (
+                        <>
+                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                          Connecting
+                        </>
+                      ) : source.category === 'file' ? (
+                        <>
+                          <FolderUp className="mr-2 h-4 w-4" />
+                          Upload and Connect
+                        </>
+                      ) : (
+                        <>
+                          <CheckCircle className="mr-2 h-4 w-4" />
+                          Connect
+                        </>
+                      )}
+                    </Button>
+                  )}
                 </div>
               </>
             ) : (
               <>
-                {/* Step 2: Database Selection */}
-                <div className="rounded-lg bg-green-50 dark:bg-green-950 border border-green-200 dark:border-green-800 p-4 space-y-2">
-                  <div className="flex items-center gap-2 text-sm">
-                    <CheckCircle className="h-4 w-4 text-green-600 dark:text-green-400" />
-                    <span className="font-medium text-green-900 dark:text-green-100">
-                      Server Connected Successfully
-                    </span>
+                <div className="rounded-lg border border-green-200 bg-green-50 p-4">
+                  <div className="flex items-center gap-2 text-sm font-medium text-green-900">
+                    <CheckCircle className="h-4 w-4" />
+                    Server reachable
                   </div>
-                  <div className="text-xs text-green-700 dark:text-green-300 pl-6 font-mono">
-                    {credentials.user}@{credentials.host}:{credentials.port}
+                  <div className="mt-2 flex items-center gap-2 text-xs text-green-800">
+                    <Server className="h-3.5 w-3.5" />
+                    <span className="font-mono">
+                      {form.user || 'user'}@{form.host}:{form.port}
+                    </span>
                   </div>
                 </div>
 
                 <div className="space-y-2">
-                  <Label htmlFor="database" className="flex items-center gap-1">
-                    Select Database <span className="text-red-500">*</span>
-                  </Label>
-                  <Select
-                    value={selectedDatabase}
-                    onValueChange={setSelectedDatabase}
-                    disabled={isConnecting}
-                  >
-                    <SelectTrigger id="database" className="w-full font-mono">
-                      <SelectValue placeholder="Choose a database..." />
+                  <Label htmlFor="database-select">{source.databaseLabel}</Label>
+                  <Select value={selectedDatabase} onValueChange={setSelectedDatabase}>
+                    <SelectTrigger id="database-select" className="font-mono">
+                      <SelectValue placeholder={`Choose a ${source.databaseLabel.toLowerCase()}...`} />
                     </SelectTrigger>
                     <SelectContent>
-                      {availableDatabases.map((db) => (
-                        <SelectItem key={db} value={db} className="font-mono">
-                          <div className="flex items-center gap-2">
-                            <Database className="h-4 w-4 text-muted-foreground" />
-                            {db}
-                          </div>
+                      {availableDatabases.map((database) => (
+                        <SelectItem key={database} value={database}>
+                          {database}
                         </SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
                   <p className="text-xs text-muted-foreground">
-                    {availableDatabases.length} database{availableDatabases.length !== 1 ? 's' : ''} available
+                    {availableDatabases.length} option{availableDatabases.length === 1 ? '' : 's'} available
                   </p>
                 </div>
 
-                {/* Create New Database Button */}
-                <Button
-                  variant="outline"
-                  className="w-full"
-                  onClick={openCreateDialog}
-                  disabled={isConnecting}
-                >
-                  <Plus className="w-4 h-4 mr-2" />
-                  Create New Database
-                </Button>
+                {source.supportsCreate && (
+                  <Button variant="outline" onClick={() => setShowCreateDialog(true)} disabled={isConnecting}>
+                    <Plus className="mr-2 h-4 w-4" />
+                    Create Database
+                  </Button>
+                )}
 
-                {/* Action Buttons */}
-                <div className="flex justify-between gap-2 pt-4 border-t">
-                  <Button 
-                    variant="outline" 
-                    onClick={handleBack} 
-                    disabled={isConnecting}
-                  >
-                    <ChevronLeft className="w-4 h-4 mr-2" />
+                <div className="flex justify-between gap-2 border-t pt-4">
+                  <Button variant="outline" onClick={handleBack} disabled={isConnecting}>
+                    <ChevronLeft className="mr-2 h-4 w-4" />
                     Back
                   </Button>
-                  <Button 
-                    onClick={handleConnect} 
-                    disabled={!selectedDatabase || isConnecting}
-                    className="min-w-[120px]"
-                  >
+                  <Button onClick={handleConnect} disabled={!selectedDatabase || isConnecting}>
                     {isConnecting ? (
                       <>
-                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                        Connecting...
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                        Connecting
                       </>
                     ) : (
                       <>
-                        <CheckCircle className="w-4 h-4 mr-2" />
+                        <CheckCircle className="mr-2 h-4 w-4" />
                         Connect
                       </>
                     )}
@@ -662,87 +643,55 @@ export const DatabaseConnectionModal = ({ isOpen, onClose, onConnect }: Database
         </DialogContent>
       </Dialog>
 
-      {/* Create Database Dialog */}
-      <Dialog open={showCreateDialog} onOpenChange={closeCreateDialog}>
+      <Dialog open={showCreateDialog} onOpenChange={setShowCreateDialog}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
-              <Plus className="h-5 w-5 text-primary" />
-              Create New Database
+              <FileSpreadsheet className="h-5 w-5 text-primary" />
+              Create Database
             </DialogTitle>
             <DialogDescription>
-              Enter a name for your new MySQL database
+              Create a new {source.shortLabel} database on the connected server.
             </DialogDescription>
           </DialogHeader>
 
-          <div className="space-y-4 py-2" onKeyPress={handleCreateKeyPress}>
-            {/* Error Alert */}
+          <div className="space-y-4">
             {createError && (
-              <Alert variant="destructive" className="animate-in slide-in-from-top-2">
+              <Alert variant="destructive">
                 <AlertCircle className="h-4 w-4" />
-                <AlertTitle>Error</AlertTitle>
+                <AlertTitle>Create Failed</AlertTitle>
                 <AlertDescription>{createError}</AlertDescription>
               </Alert>
             )}
 
             <div className="space-y-2">
-              <Label htmlFor="newDbName" className="flex items-center gap-1">
-                Database Name <span className="text-red-500">*</span>
-              </Label>
+              <Label htmlFor="new-db-name">Database Name</Label>
               <Input
-                id="newDbName"
+                id="new-db-name"
                 value={newDatabaseName}
-                onChange={(e) => {
-                  setNewDatabaseName(e.target.value);
+                onChange={(event) => {
+                  setNewDatabaseName(event.target.value);
                   setCreateError(null);
                 }}
-                placeholder="my_database"
-                disabled={isCreatingDatabase}
+                placeholder="analytics_workspace"
                 className="font-mono"
-                autoFocus
-              />
-              <p className="text-xs text-muted-foreground">
-                Only letters, numbers, and underscores allowed (max 64 characters)
-              </p>
-            </div>
-
-            {/* Info Box */}
-            <div className="rounded-lg bg-blue-50 dark:bg-blue-950 border border-blue-200 dark:border-blue-800 p-3">
-              <div className="flex items-start gap-2">
-                <Lightbulb className="h-4 w-4 text-blue-600 dark:text-blue-400 mt-0.5 flex-shrink-0" />
-                <div className="text-xs text-blue-900 dark:text-blue-100">
-                  <p className="font-semibold mb-1">💡 Naming Tips:</p>
-                  <ul className="list-disc list-inside space-y-1 text-blue-800 dark:text-blue-200">
-                    <li>Use lowercase for consistency</li>
-                    <li>Separate words with underscores (e.g., my_app_db)</li>
-                    <li>Keep it descriptive but concise</li>
-                  </ul>
-                </div>
-              </div>
-            </div>
-
-            {/* Action Buttons */}
-            <div className="flex justify-end gap-2 pt-4 border-t">
-              <Button
-                variant="outline"
-                onClick={closeCreateDialog}
                 disabled={isCreatingDatabase}
-              >
+              />
+            </div>
+
+            <div className="flex justify-end gap-2 border-t pt-4">
+              <Button variant="outline" onClick={() => setShowCreateDialog(false)} disabled={isCreatingDatabase}>
                 Cancel
               </Button>
-              <Button
-                onClick={handleCreateDatabase}
-                disabled={!newDatabaseName.trim() || isCreatingDatabase}
-                className="min-w-[120px]"
-              >
+              <Button onClick={handleCreateDatabase} disabled={isCreatingDatabase || !newDatabaseName.trim()}>
                 {isCreatingDatabase ? (
                   <>
-                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                    Creating...
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Creating
                   </>
                 ) : (
                   <>
-                    <Plus className="w-4 h-4 mr-2" />
+                    <Plus className="mr-2 h-4 w-4" />
                     Create
                   </>
                 )}

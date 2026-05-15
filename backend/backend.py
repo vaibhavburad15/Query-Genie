@@ -1,7 +1,8 @@
 ﻿import os
 from datetime import datetime, timedelta, timezone
+import logging
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, Depends, Path, Request, Header
+from fastapi import FastAPI, HTTPException, Depends, Path, Request, Header, File, Form, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from slowapi import Limiter
 from slowapi.util import get_remote_address
@@ -15,15 +16,14 @@ import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from passlib.context import CryptContext
-from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.runnables import RunnablePassthrough
-from langchain_core.output_parsers import StrOutputParser
 from langchain_community.utilities import SQLDatabase
 from langchain_groq import ChatGroq
-from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime, ForeignKey, text, or_
+import requests
+from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime, ForeignKey, text, or_, inspect as sqlalchemy_inspect
 from sqlalchemy.orm import declarative_base
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.types import UserDefinedType
 import json
 import re
 from typing import cast, Any
@@ -32,11 +32,14 @@ import csv
 import io
 import hashlib
 import secrets
+import sqlite3
 from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
 from datetime import datetime
 from sqlalchemy import Column, Integer, String, Text, DateTime
 from datetime import datetime
+from pathlib import Path as FilePath
+from urllib.parse import quote_plus
 
 from extended_models import (
     FavoriteQuery,
@@ -53,10 +56,12 @@ import time
 # ─────────────────────────────────────────────
 # ENV / KEYS
 # ─────────────────────────────────────────────
+logger = logging.getLogger(__name__)
+
 load_dotenv()
 groq_api_key = os.getenv("GROQ_API_KEY")
 if not groq_api_key:
-    print("WARNING: GROQ_API_KEY not found in environment variables.")
+    logger.warning("GROQ_API_KEY not found in environment variables.")
     GROQ_API_KEY = ""
 else:
     GROQ_API_KEY = cast(str, groq_api_key)
@@ -64,15 +69,53 @@ else:
 EMAIL_HOST_USER = os.getenv("EMAIL_HOST_USER")
 EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD")
 if not EMAIL_HOST_USER or not EMAIL_HOST_PASSWORD:
-    print("WARNING: Email credentials not found. OTP sending will be disabled.")
+    logger.warning("Email credentials not found. OTP sending will be disabled.")
+
+USE_OLLAMA = os.getenv("USE_OLLAMA", "true")
+OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434").rstrip("/")
+OLLAMA_GENERATE_URL = f"{OLLAMA_BASE_URL}/api/generate"
+OLLAMA_HEALTH_URL = f"{OLLAMA_BASE_URL}/api/tags"
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "deepseek-coder")
+OLLAMA_TIMEOUT_SECONDS = 10
+OLLAMA_HEALTH_TIMEOUT_SECONDS = int(os.getenv("OLLAMA_HEALTH_TIMEOUT_SECONDS", "30"))
+OLLAMA_MAX_RETRIES = 1
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+
+class VectorType(UserDefinedType):
+    cache_ok = True
+    
+    def __init__(self, *args, **kwargs):
+        self.args = args
+        self.kwargs = kwargs
+
+    def get_col_spec(self, **kw):
+        if self.args:
+            return f"VECTOR({', '.join(str(arg) for arg in self.args)})"
+        return "VECTOR"
+
+
+def register_custom_reflection_types() -> None:
+    try:
+        from sqlalchemy.dialects.postgresql.base import ischema_names as postgres_ischema_names
+
+        if "vector" not in postgres_ischema_names:
+            postgres_ischema_names["vector"] = VectorType
+            logger.info("Registered PostgreSQL reflection handler for VECTOR columns.")
+    except Exception as exc:
+        logger.warning("Unable to register custom reflection types: %s", exc)
+
+
+register_custom_reflection_types()
 
 # ─────────────────────────────────────────────
 # APP-INTERNAL SQLITE DATABASE  (users, sessions, etc.)
 # ─────────────────────────────────────────────
 BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
 SQLITE_DB_FILE = os.path.join(BACKEND_DIR, "users.db")
+IMPORTED_DB_DIR = os.path.join(BACKEND_DIR, "imported_sources")
+os.makedirs(IMPORTED_DB_DIR, exist_ok=True)
 engine = create_engine(
     f"sqlite:///{SQLITE_DB_FILE}",
     echo=False,
@@ -134,6 +177,7 @@ class DatabaseSession(Base):
     token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True, nullable=False)
     db_uri: Mapped[str] = mapped_column(Text, nullable=False)
     db_name: Mapped[str] = mapped_column(String, nullable=False)
+    db_type: Mapped[str] = mapped_column(String(32), nullable=False, default="mysql")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
 
@@ -148,7 +192,19 @@ class OtpCode(Base):
     expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
 
 
-Base.metadata.create_all(engine)
+def ensure_internal_schema() -> None:
+    Base.metadata.create_all(engine)
+    with engine.begin() as connection:
+        inspector = sqlalchemy_inspect(connection)
+        if inspector.has_table("database_sessions"):
+            columns = {column["name"] for column in inspector.get_columns("database_sessions")}
+            if "db_type" not in columns:
+                connection.execute(
+                    text("ALTER TABLE database_sessions ADD COLUMN db_type VARCHAR(32) NOT NULL DEFAULT 'mysql'")
+                )
+
+
+ensure_internal_schema()
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 # ─────────────────────────────────────────────
@@ -169,17 +225,21 @@ class DbSessionStore:
         db.query(DatabaseSession).filter(DatabaseSession.expires_at <= datetime.utcnow()).delete()
         db.flush()
 
-    def create(self, user_id: int, db_uri: str, db_name: str, db: Session) -> str:
+    def create(self, user_id: int, db_uri: str, db_name: str, db_type: str, db: Session) -> str:
         """Store a new connection and return an opaque session token."""
         token = secrets.token_urlsafe(32)
         self._cleanup_expired(db)
-        db.query(DatabaseSession).filter(DatabaseSession.user_id == user_id).delete()
+        existing_sessions = db.query(DatabaseSession).filter(DatabaseSession.user_id == user_id).all()
+        for existing_session in existing_sessions:
+            cleanup_imported_snapshot(existing_session.db_uri, existing_session.db_type)
+            db.delete(existing_session)
         db.add(
             DatabaseSession(
                 user_id=user_id,
                 token_hash=hash_token(token),
                 db_uri=db_uri,
                 db_name=db_name,
+                db_type=normalize_source_type(db_type),
                 expires_at=datetime.utcnow() + timedelta(seconds=self._ttl),
             )
         )
@@ -200,6 +260,7 @@ class DbSessionStore:
         return {
             "db_uri": session.db_uri,
             "db_name": session.db_name,
+            "db_type": session.db_type,
             "session_id": session.id,
             "user_id": session.user_id,
         }
@@ -208,7 +269,9 @@ class DbSessionStore:
         query = db.query(DatabaseSession).filter(DatabaseSession.token_hash == hash_token(token))
         if user_id is not None:
             query = query.filter(DatabaseSession.user_id == user_id)
-        query.delete()
+        for session in query.all():
+            cleanup_imported_snapshot(session.db_uri, session.db_type)
+            db.delete(session)
         db.commit()
 
 
@@ -218,7 +281,11 @@ db_session_store = DbSessionStore(ttl_seconds=int(os.getenv("DB_SESSION_TTL", "3
 # ─────────────────────────────────────────────
 # QUERY RESULT ROW LIMIT
 # ─────────────────────────────────────────────
-MAX_RESULT_ROWS = int(os.getenv("MAX_RESULT_ROWS", "1000"))
+DEFAULT_MAX_RESULT_ROWS = 10000
+MAX_RESULT_ROWS = max(
+    1,
+    min(int(os.getenv("MAX_RESULT_ROWS", str(DEFAULT_MAX_RESULT_ROWS))), DEFAULT_MAX_RESULT_ROWS),
+)
 
 
 # ─────────────────────────────────────────────
@@ -275,7 +342,7 @@ app = FastAPI()
 limiter = Limiter(key_func=get_remote_address)
 app.state.limiter = limiter
 
-ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "http://localhost:5173,http://localhost:3000").split(",")
+ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "http://localhost:5173,http://localhost:3000,http://localhost:8081").split(",")
 
 app.add_middleware(
     CORSMiddleware,
@@ -340,24 +407,28 @@ otp_manager = OtpManager()
 # PYDANTIC MODELS
 # ─────────────────────────────────────────────
 class DBConfig(BaseModel):
-    host: str
-    port: int
-    user: str
+    type: str = "mysql"
+    host: str = ""
+    port: Optional[int] = None
+    user: str = ""
     password: str = ""
-    database: str
+    database: str = ""
+    path: str = ""
 
 
 class ServerConnectionConfig(BaseModel):
-    host: str
-    port: int
-    user: str
+    type: str = "mysql"
+    host: str = ""
+    port: Optional[int] = None
+    user: str = ""
     password: str = ""
 
 
 class CreateDatabaseRequest(BaseModel):
-    host: str
-    port: int
-    user: str
+    type: str = "mysql"
+    host: str = ""
+    port: Optional[int] = None
+    user: str = ""
     password: str = ""
     database_name: str
 
@@ -491,11 +562,268 @@ def get_db():
 
 
 AUTH_SESSION_TTL_SECONDS = int(os.getenv("AUTH_SESSION_TTL", "604800"))
-READ_ONLY_SQL_PREFIXES = ("SELECT", "WITH", "SHOW", "DESCRIBE", "DESC", "EXPLAIN")
+READ_ONLY_SQL_PREFIXES = ("SELECT", "WITH", "SHOW", "DESCRIBE", "DESC", "EXPLAIN", "PRAGMA")
+SQL_SOURCE_TYPES = {"mysql", "postgresql", "mariadb", "oracle", "sqlserver", "db2", "sqlite", "csv", "excel"}
+FILE_SOURCE_TYPES = {"csv", "excel"}
+METADATA_ONLY_SOURCE_TYPES = {"mongodb", "redis"}
+CHAT_ENABLED_SOURCE_TYPES = SQL_SOURCE_TYPES
 
 
 def hash_token(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def normalize_source_type(source_type: Optional[str]) -> str:
+    normalized = (source_type or "mysql").strip().lower()
+    aliases = {
+        "postgres": "postgresql",
+        "postgresql": "postgresql",
+        "mssql": "sqlserver",
+        "sql_server": "sqlserver",
+        "mariadb": "mariadb",
+        "db2": "db2",
+        "excel/csv": "csv",
+    }
+    return aliases.get(normalized, normalized)
+
+
+def source_supports_query(source_type: Optional[str]) -> bool:
+    return normalize_source_type(source_type) in CHAT_ENABLED_SOURCE_TYPES
+
+
+def quote_sql_value(value: str) -> str:
+    return quote_plus(value or "")
+
+
+def build_sqlalchemy_uri(
+    source_type: str,
+    host: str = "",
+    port: Optional[int] = None,
+    user: str = "",
+    password: str = "",
+    database: str = "",
+    path: str = "",
+) -> str:
+    normalized = normalize_source_type(source_type)
+    if normalized == "sqlite":
+        sqlite_path = os.path.abspath(path or database)
+        if not sqlite_path:
+            raise ValueError("A SQLite file path is required.")
+        return f"sqlite:///{sqlite_path.replace(os.sep, '/')}"
+
+    if not host:
+        raise ValueError("Host is required.")
+    if port is None:
+        raise ValueError("Port is required.")
+
+    user_part = quote_sql_value(user)
+    password_part = quote_sql_value(password)
+    database_part = quote_sql_value(database)
+
+    if normalized in {"mysql", "mariadb"}:
+        return (
+            f"mysql+mysqlconnector://{user_part}:{password_part}"
+            f"@{host}:{port}/{database_part}"
+        )
+    if normalized == "postgresql":
+        return (
+            f"postgresql+psycopg2://{user_part}:{password_part}"
+            f"@{host}:{port}/{database_part}"
+        )
+    if normalized == "oracle":
+        return (
+            f"oracle+oracledb://{user_part}:{password_part}"
+            f"@{host}:{port}/?service_name={database_part}"
+        )
+    if normalized == "sqlserver":
+        odbc_connect = (
+            "DRIVER={ODBC Driver 18 for SQL Server};"
+            f"SERVER={host},{port};"
+            f"DATABASE={database};"
+            f"UID={user};"
+            f"PWD={password};"
+            "TrustServerCertificate=yes;"
+            "Encrypt=no"
+        )
+        return f"mssql+pyodbc:///?odbc_connect={quote_plus(odbc_connect)}"
+    if normalized == "db2":
+        return (
+            f"db2+ibm_db://{user_part}:{password_part}"
+            f"@{host}:{port}/{database_part}"
+        )
+    raise ValueError(f"Unsupported SQL source type: {source_type}")
+
+
+def build_mongodb_uri(
+    host: str,
+    port: Optional[int],
+    user: str = "",
+    password: str = "",
+    database: str = "admin",
+) -> str:
+    if not host:
+        raise ValueError("Host is required.")
+    if port is None:
+        raise ValueError("Port is required.")
+    auth = ""
+    if user:
+        auth = quote_sql_value(user)
+        if password:
+            auth += f":{quote_sql_value(password)}"
+        auth += "@"
+    elif password:
+        auth = f":{quote_sql_value(password)}@"
+    return f"mongodb://{auth}{host}:{port}/{quote_sql_value(database or 'admin')}"
+
+
+def build_redis_uri(
+    host: str,
+    port: Optional[int],
+    user: str = "",
+    password: str = "",
+    database: str = "0",
+) -> str:
+    if not host:
+        raise ValueError("Host is required.")
+    if port is None:
+        raise ValueError("Port is required.")
+    auth = ""
+    if user:
+        auth = quote_sql_value(user)
+        if password:
+            auth += f":{quote_sql_value(password)}"
+        auth += "@"
+    elif password:
+        auth = f":{quote_sql_value(password)}@"
+    return f"redis://{auth}{host}:{port}/{database or '0'}"
+
+
+def slugify_identifier(value: str, fallback: str) -> str:
+    cleaned = re.sub(r"[^0-9a-zA-Z_]+", "_", value.strip().lower()).strip("_")
+    if not cleaned:
+        cleaned = fallback
+    if cleaned[0].isdigit():
+        cleaned = f"t_{cleaned}"
+    return cleaned[:63]
+
+
+def unique_identifiers(raw_values: List[str], prefix: str) -> List[str]:
+    seen: Dict[str, int] = {}
+    normalized: List[str] = []
+    for index, raw_value in enumerate(raw_values, start=1):
+        base = slugify_identifier(raw_value or f"{prefix}_{index}", f"{prefix}_{index}")
+        count = seen.get(base, 0)
+        seen[base] = count + 1
+        normalized.append(base if count == 0 else f"{base}_{count + 1}")
+    return normalized
+
+
+def sqlite_identifier(name: str) -> str:
+    return f'"{name.replace(chr(34), chr(34) * 2)}"'
+
+
+def create_imported_sqlite_path(label: str, user_id: int) -> str:
+    safe_label = slugify_identifier(FilePath(label).stem, "uploaded_source")
+    filename = f"{safe_label}_{user_id}_{int(time.time())}_{secrets.token_hex(4)}.sqlite"
+    return os.path.join(IMPORTED_DB_DIR, filename)
+
+
+def cleanup_imported_snapshot(db_uri: str, db_type: Optional[str]) -> None:
+    if normalize_source_type(db_type) not in FILE_SOURCE_TYPES:
+        return
+    if not db_uri.startswith("sqlite:///"):
+        return
+    db_path = db_uri.replace("sqlite:///", "", 1)
+    try:
+        resolved = os.path.abspath(db_path)
+        if os.path.commonpath([resolved, os.path.abspath(IMPORTED_DB_DIR)]) == os.path.abspath(IMPORTED_DB_DIR):
+            if os.path.exists(resolved):
+                os.remove(resolved)
+    except Exception:
+        pass
+
+
+def create_sqlite_snapshot_from_csv(file_name: str, file_bytes: bytes, user_id: int) -> str:
+    csv_text = file_bytes.decode("utf-8-sig")
+    reader = list(csv.reader(io.StringIO(csv_text)))
+    if not reader:
+        raise ValueError("The CSV file is empty.")
+
+    headers = unique_identifiers([str(value) for value in reader[0]], "column")
+    rows = reader[1:]
+    table_name = slugify_identifier(FilePath(file_name).stem, "sheet1")
+    sqlite_path = create_imported_sqlite_path(file_name, user_id)
+
+    connection = sqlite3.connect(sqlite_path)
+    try:
+        columns_sql = ", ".join(f"{sqlite_identifier(column)} TEXT" for column in headers)
+        connection.execute(f"CREATE TABLE {sqlite_identifier(table_name)} ({columns_sql})")
+        placeholders = ", ".join("?" for _ in headers)
+        normalized_rows = []
+        for row in rows:
+            padded = list(row[: len(headers)]) + [""] * max(0, len(headers) - len(row))
+            normalized_rows.append([("" if cell is None else str(cell)) for cell in padded[: len(headers)]])
+        if normalized_rows:
+            connection.executemany(
+                f"INSERT INTO {sqlite_identifier(table_name)} VALUES ({placeholders})",
+                normalized_rows,
+            )
+        connection.commit()
+    finally:
+        connection.close()
+
+    return f"sqlite:///{sqlite_path.replace(os.sep, '/')}"
+
+
+def create_sqlite_snapshot_from_excel(file_name: str, file_bytes: bytes, user_id: int) -> str:
+    try:
+        from openpyxl import load_workbook
+    except ImportError as exc:
+        raise ValueError("Excel import requires the openpyxl package.") from exc
+
+    sqlite_path = create_imported_sqlite_path(file_name, user_id)
+    workbook = load_workbook(io.BytesIO(file_bytes), data_only=True, read_only=True)
+    connection = sqlite3.connect(sqlite_path)
+
+    try:
+        created_tables = 0
+        for sheet in workbook.worksheets:
+            sheet_rows = list(sheet.iter_rows(values_only=True))
+            if not sheet_rows:
+                continue
+            headers = unique_identifiers([str(value or "") for value in sheet_rows[0]], "column")
+            table_name = slugify_identifier(sheet.title, f"sheet_{created_tables + 1}")
+            columns_sql = ", ".join(f"{sqlite_identifier(column)} TEXT" for column in headers)
+            connection.execute(f"CREATE TABLE {sqlite_identifier(table_name)} ({columns_sql})")
+            placeholders = ", ".join("?" for _ in headers)
+            normalized_rows = []
+            for row in sheet_rows[1:]:
+                padded = list(row[: len(headers)]) + [""] * max(0, len(headers) - len(row))
+                normalized_rows.append([("" if cell is None else str(cell)) for cell in padded[: len(headers)]])
+            if normalized_rows:
+                connection.executemany(
+                    f"INSERT INTO {sqlite_identifier(table_name)} VALUES ({placeholders})",
+                    normalized_rows,
+                )
+            created_tables += 1
+        if created_tables == 0:
+            raise ValueError("The Excel workbook does not contain any populated sheets.")
+        connection.commit()
+    finally:
+        connection.close()
+
+    return f"sqlite:///{sqlite_path.replace(os.sep, '/')}"
+
+
+def create_sql_snapshot_for_uploaded_file(source_type: str, upload: UploadFile, user_id: int) -> str:
+    file_bytes = upload.file.read()
+    if not file_bytes:
+        raise ValueError("The uploaded file is empty.")
+    if normalize_source_type(source_type) == "csv":
+        return create_sqlite_snapshot_from_csv(upload.filename or "uploaded.csv", file_bytes, user_id)
+    if normalize_source_type(source_type) == "excel":
+        return create_sqlite_snapshot_from_excel(upload.filename or "uploaded.xlsx", file_bytes, user_id)
+    raise ValueError(f"Unsupported uploaded source type: {source_type}")
 
 
 def create_auth_token(user_id: int, db: Session) -> str:
@@ -575,13 +903,16 @@ class EngineCache:
         with self._lock:
             engine = self._engines.get(db_uri)
             if engine is None:
-                engine = create_engine(
-                    db_uri,
-                    pool_pre_ping=True,
-                    pool_recycle=3600,
-                    pool_size=10,
-                    max_overflow=20,
-                )
+                engine_kwargs: Dict[str, Any] = {
+                    "pool_pre_ping": True,
+                    "pool_recycle": 3600,
+                }
+                if db_uri.startswith("sqlite:///"):
+                    engine_kwargs["connect_args"] = {"check_same_thread": False}
+                else:
+                    engine_kwargs["pool_size"] = 10
+                    engine_kwargs["max_overflow"] = 20
+                engine = create_engine(db_uri, **engine_kwargs)
                 self._engines[db_uri] = engine
             return engine
 
@@ -593,6 +924,272 @@ class EngineCache:
 
 
 engine_cache = EngineCache()
+
+
+def validate_source_connection(db_uri: str, source_type: str, db_name: str = "") -> None:
+    normalized = normalize_source_type(source_type)
+    if normalized in SQL_SOURCE_TYPES:
+        engine = create_engine(
+            db_uri,
+            connect_args={"check_same_thread": False} if db_uri.startswith("sqlite:///") else {},
+            pool_pre_ping=True,
+        )
+        try:
+            with engine.connect() as connection:
+                connection.execute(text("SELECT 1"))
+        finally:
+            engine.dispose()
+        return
+
+    if normalized == "mongodb":
+        try:
+            from pymongo import MongoClient
+        except ImportError as exc:
+            raise ValueError("MongoDB support requires the pymongo package.") from exc
+
+        client = MongoClient(db_uri, serverSelectionTimeoutMS=5000)
+        try:
+            client.admin.command("ping")
+            if db_name:
+                client[db_name].list_collection_names()
+        finally:
+            client.close()
+        return
+
+    if normalized == "redis":
+        try:
+            import redis
+        except ImportError as exc:
+            raise ValueError("Redis support requires the redis package.") from exc
+
+        client = redis.Redis.from_url(db_uri, socket_connect_timeout=5, socket_timeout=5, decode_responses=True)
+        client.ping()
+        return
+
+    raise ValueError(f"Unsupported source type: {source_type}")
+
+
+def list_available_databases_for_source(config: ServerConnectionConfig) -> List[str]:
+    source_type = normalize_source_type(config.type)
+    if source_type in {"mysql", "mariadb"}:
+        engine = create_engine(
+            build_sqlalchemy_uri(source_type, config.host, config.port, config.user, config.password, "mysql")
+        )
+        try:
+            with engine.connect() as connection:
+                result = connection.execute(text("SHOW DATABASES"))
+                databases = [str(row[0]) for row in result.fetchall()]
+        finally:
+            engine.dispose()
+        system_dbs = {"information_schema", "mysql", "performance_schema", "sys"}
+        return [name for name in databases if name not in system_dbs]
+
+    if source_type == "postgresql":
+        engine = create_engine(
+            build_sqlalchemy_uri(source_type, config.host, config.port, config.user, config.password, "postgres")
+        )
+        try:
+            with engine.connect() as connection:
+                result = connection.execute(
+                    text(
+                        "SELECT datname FROM pg_database "
+                        "WHERE datistemplate = false ORDER BY datname"
+                    )
+                )
+                return [str(row[0]) for row in result.fetchall()]
+        finally:
+            engine.dispose()
+
+    if source_type == "sqlserver":
+        engine = create_engine(
+            build_sqlalchemy_uri(source_type, config.host, config.port, config.user, config.password, "master")
+        )
+        try:
+            with engine.connect() as connection:
+                result = connection.execute(
+                    text("SELECT name FROM sys.databases WHERE database_id > 4 ORDER BY name")
+                )
+                return [str(row[0]) for row in result.fetchall()]
+        finally:
+            engine.dispose()
+
+    if source_type == "mongodb":
+        try:
+            from pymongo import MongoClient
+        except ImportError as exc:
+            raise ValueError("MongoDB support requires the pymongo package.") from exc
+
+        client = MongoClient(
+            build_mongodb_uri(config.host, config.port, config.user, config.password, "admin"),
+            serverSelectionTimeoutMS=5000,
+        )
+        try:
+            names = client.list_database_names()
+            return [name for name in names if name not in {"admin", "config", "local"}]
+        finally:
+            client.close()
+
+    raise ValueError(f"Listing databases is not available for {config.type}.")
+
+
+def create_database_for_source(request: CreateDatabaseRequest) -> None:
+    source_type = normalize_source_type(request.type)
+    if not re.match(r"^[a-zA-Z0-9_]+$", request.database_name):
+        raise ValueError("Database name can only contain letters, numbers, and underscores.")
+
+    if source_type in {"mysql", "mariadb"}:
+        engine = create_engine(
+            build_sqlalchemy_uri(source_type, request.host, request.port, request.user, request.password, "mysql")
+        )
+        try:
+            with engine.begin() as connection:
+                connection.execute(text(f"CREATE DATABASE IF NOT EXISTS `{request.database_name}`"))
+        finally:
+            engine.dispose()
+        return
+
+    if source_type == "postgresql":
+        engine = create_engine(
+            build_sqlalchemy_uri(source_type, request.host, request.port, request.user, request.password, "postgres"),
+            isolation_level="AUTOCOMMIT",
+        )
+        try:
+            with engine.connect() as connection:
+                connection.execute(text(f'CREATE DATABASE "{request.database_name}"'))
+        finally:
+            engine.dispose()
+        return
+
+    raise ValueError(f"Creating databases is not available for {request.type}.")
+
+
+def build_connection_artifacts(config: DBConfig) -> Tuple[str, str, str]:
+    source_type = normalize_source_type(config.type)
+
+    if source_type in SQL_SOURCE_TYPES:
+        db_uri = build_sqlalchemy_uri(
+            source_type,
+            config.host,
+            config.port,
+            config.user,
+            config.password,
+            config.database,
+            config.path,
+        )
+        db_name = config.database or FilePath(config.path or "sqlite").name
+        return source_type, db_uri, db_name
+
+    if source_type == "mongodb":
+        return (
+            source_type,
+            build_mongodb_uri(config.host, config.port, config.user, config.password, config.database or "admin"),
+            config.database or "admin",
+        )
+
+    if source_type == "redis":
+        return (
+            source_type,
+            build_redis_uri(config.host, config.port, config.user, config.password, config.database or "0"),
+            config.database or "0",
+        )
+
+    raise ValueError(f"Unsupported source type: {config.type}")
+
+
+def get_sql_tables_info(db_uri: str) -> List[Dict[str, Any]]:
+    engine = engine_cache.get(db_uri)
+    inspector = sqlalchemy_inspect(engine)
+    table_names = inspector.get_table_names()
+    preparer = engine.dialect.identifier_preparer
+
+    tables: List[Dict[str, Any]] = []
+    with engine.connect() as connection:
+        for table_name in table_names:
+            quoted_table = preparer.quote_identifier(table_name)
+            row_count = 0
+            try:
+                row_count = int(connection.execute(text(f"SELECT COUNT(*) FROM {quoted_table}")).scalar() or 0)
+            except Exception as table_error:
+                print(f"Error counting rows for table {table_name}: {table_error}")
+            tables.append({"name": table_name, "rowCount": row_count, "lastUpdated": "unknown"})
+    return tables
+
+
+def get_sql_table_schema(db_uri: str, table_name: str) -> List[Dict[str, Any]]:
+    engine = engine_cache.get(db_uri)
+    inspector = sqlalchemy_inspect(engine)
+    columns = inspector.get_columns(table_name)
+    return [
+        {
+            "name": column["name"],
+            "type": str(column["type"]),
+            "nullable": bool(column.get("nullable", True)),
+            "default": column.get("default"),
+            "autoincrement": bool(column.get("autoincrement")),
+        }
+        for column in columns
+    ]
+
+
+def get_mongodb_tables_info(db_uri: str, db_name: str) -> List[Dict[str, Any]]:
+    try:
+        from pymongo import MongoClient
+    except ImportError as exc:
+        raise ValueError("MongoDB support requires the pymongo package.") from exc
+
+    client = MongoClient(db_uri, serverSelectionTimeoutMS=5000)
+    try:
+        database = client[db_name]
+        tables = []
+        for collection_name in database.list_collection_names():
+            count = database[collection_name].estimated_document_count()
+            tables.append({"name": collection_name, "rowCount": int(count), "lastUpdated": "live"})
+        return tables
+    finally:
+        client.close()
+
+
+def get_mongodb_table_schema(db_uri: str, db_name: str, collection_name: str) -> List[Dict[str, Any]]:
+    try:
+        from pymongo import MongoClient
+    except ImportError as exc:
+        raise ValueError("MongoDB support requires the pymongo package.") from exc
+
+    client = MongoClient(db_uri, serverSelectionTimeoutMS=5000)
+    try:
+        sample = client[db_name][collection_name].find_one() or {}
+        return [
+            {
+                "name": field_name,
+                "type": type(field_value).__name__,
+                "nullable": True,
+                "default": None,
+                "autoincrement": False,
+            }
+            for field_name, field_value in sample.items()
+        ]
+    finally:
+        client.close()
+
+
+def get_redis_tables_info(db_uri: str) -> List[Dict[str, Any]]:
+    try:
+        import redis
+    except ImportError as exc:
+        raise ValueError("Redis support requires the redis package.") from exc
+
+    client = redis.Redis.from_url(db_uri, socket_connect_timeout=5, socket_timeout=5, decode_responses=True)
+    dbsize_result = cast(Any, client.dbsize())
+    return [{"name": "redis_keys", "rowCount": int(dbsize_result), "lastUpdated": "live"}]
+
+
+def get_redis_table_schema() -> List[Dict[str, Any]]:
+    return [
+        {"name": "key", "type": "string", "nullable": False, "default": None, "autoincrement": False},
+        {"name": "type", "type": "string", "nullable": True, "default": None, "autoincrement": False},
+        {"name": "ttl", "type": "integer", "nullable": True, "default": None, "autoincrement": False},
+        {"name": "value_preview", "type": "string", "nullable": True, "default": None, "autoincrement": False},
+    ]
 
 
 def generate_otp():
@@ -755,26 +1352,431 @@ def format_chat_history(chat_history: list) -> str:
 # ─────────────────────────────────────────────
 # LLM CHAIN
 # ─────────────────────────────────────────────
-def get_sql_chain(db, chat_history: Optional[list] = None):
+def is_association_table(columns: List[Dict[str, Any]], foreign_keys: List[Dict[str, Any]]) -> bool:
+    if len(foreign_keys) < 2:
+        return False
+
+    column_names = {str(column.get("name", "")) for column in columns}
+    ignored_columns = {"id", "created_at", "updated_at", "createdon", "updatedon", "deleted_at"}
+    significant_columns = {name for name in column_names if name and name not in ignored_columns}
+    fk_columns = {
+        column_name
+        for foreign_key in foreign_keys
+        for column_name in (foreign_key.get("constrained_columns") or [])
+    }
+    return bool(significant_columns) and significant_columns.issubset(fk_columns)
+
+
+def build_llm_schema_context(db) -> str:
+    engine = db._engine
+    inspector = sqlalchemy_inspect(engine)
+    table_names = sorted(inspector.get_table_names())
+    schema_lines: List[str] = []
+    relationship_lines: List[str] = []
+
+    for table_name in table_names:
+        columns = inspector.get_columns(table_name)
+        pk_constraint = inspector.get_pk_constraint(table_name) or {}
+        primary_keys = set(pk_constraint.get("constrained_columns") or [])
+        foreign_keys = inspector.get_foreign_keys(table_name) or []
+
+        fk_map: Dict[str, List[str]] = {}
+        for foreign_key in foreign_keys:
+            constrained_columns = foreign_key.get("constrained_columns") or []
+            referred_table = foreign_key.get("referred_table")
+            referred_columns = foreign_key.get("referred_columns") or []
+
+            for index, column_name in enumerate(constrained_columns):
+                if referred_table and index < len(referred_columns):
+                    fk_target = f"{referred_table}.{referred_columns[index]}"
+                    fk_map.setdefault(column_name, []).append(fk_target)
+                    relationship_lines.append(f"{table_name}.{column_name} -> {fk_target}")
+
+        schema_lines.append(f"Table {table_name}:")
+        for column in columns:
+            column_name = str(column.get("name", ""))
+            flags: List[str] = []
+            if column_name in primary_keys:
+                flags.append("PK")
+            if not bool(column.get("nullable", True)):
+                flags.append("NOT NULL")
+            if column_name in fk_map:
+                flags.append(f"FK -> {', '.join(fk_map[column_name])}")
+
+            flags_text = f" [{', '.join(flags)}]" if flags else ""
+            schema_lines.append(f"  - {column_name}: {column['type']}{flags_text}")
+
+        if is_association_table(columns, foreign_keys):
+            linked_tables = sorted({
+                foreign_key.get("referred_table")
+                for foreign_key in foreign_keys
+                if foreign_key.get("referred_table")
+            })
+            if linked_tables:
+                schema_lines.append(
+                    f"  - Note: {table_name} is an association table linking {', '.join(linked_tables)}."
+                )
+
+        schema_lines.append("")
+
+    summary_lines = [
+        "Schema Summary:",
+        f"- Dialect: {getattr(engine.dialect, 'name', 'sql')}",
+        f"- Tables: {len(table_names)}",
+        "",
+    ]
+
+    if relationship_lines:
+        summary_lines.extend([
+            "Known Relationships:",
+            *[f"- {relationship}" for relationship in sorted(set(relationship_lines))],
+            "",
+        ])
+
+    summary_lines.extend(schema_lines)
+    logger.info(
+        "Prepared schema context for LLM with %s tables and %s relationships.",
+        len(table_names),
+        len(set(relationship_lines)),
+    )
+    return "\n".join(summary_lines).strip()
+
+
+def build_sql_prompt(
+    db,
+    question: str,
+    chat_history: Optional[list] = None,
+    failed_sql: Optional[str] = None,
+    execution_error: Optional[str] = None,
+) -> str:
     history_context = format_chat_history(chat_history or [])
+    dialect_name = getattr(db._engine.dialect, "name", "SQL").replace("_", " ").title()
+    system_prompt = SQL_SYSTEM_PROMPT.replace("{dialect}", dialect_name).strip()
+    schema_context = build_llm_schema_context(db)
 
-    user_template = """Database Schema:
-{schema}
+    prompt_parts = [
+        system_prompt,
+        "Database Schema:",
+        schema_context,
+        "Conversation History:",
+        history_context,
+        "Current User Question:",
+        question.strip(),
+    ]
 
-{history}
+    if failed_sql and execution_error:
+        prompt_parts.extend([
+            "Previous SQL Attempt:",
+            failed_sql.strip(),
+            "Execution Error:",
+            execution_error.strip(),
+            "Correction Rules:",
+            "- Fix the SQL using only the exact tables and columns listed in the schema.",
+            "- Re-check every JOIN key and every filtered column before answering.",
+            "- If descriptive values are needed from a lookup table, join through the foreign keys shown in the schema.",
+        ])
+    else:
+        prompt_parts.extend([
+            "Generation Rules:",
+            "- Use the exact table names and column names from the schema.",
+            "- Re-check every JOIN key and every filtered column before answering.",
+            "- If descriptive values are needed from a lookup table, join through the foreign keys shown in the schema.",
+        ])
 
-Current User Question:
-{question}
-
-Instructions:
-- Use the database schema above to understand table structures
-- Review the previous conversation history to understand context
-- Generate ONLY the SQL query, nothing else"""
-
-    prompt = ChatPromptTemplate.from_messages([
-        ("system", SQL_SYSTEM_PROMPT),
-        ("user", user_template),
+    prompt_parts.extend([
+        "Output Rules:",
+        "- Return only one read-only SQL query.",
+        "- No markdown fences.",
+        "- No explanation.",
+        "- No comments.",
+        "- No trailing semicolon.",
     ])
+
+    return "\n\n".join(prompt_parts)
+
+
+def should_retry_sql_generation(error_message: str) -> bool:
+    normalized_error = error_message.lower()
+    retryable_markers = (
+        "undefinedcolumn",
+        "undefinedtable",
+        "unknown column",
+        "no such column",
+        "no such table",
+        "does not exist",
+        "missing from-clause",
+        "syntax error",
+        "ambiguous column",
+        "invalid reference",
+    )
+    return any(marker in normalized_error for marker in retryable_markers)
+
+
+def format_query_execution_error(sql_query: str, error_message: str) -> Dict[str, Any]:
+    if "only_full_group_by" in error_message or "1140" in error_message:
+        helpful_msg = (
+            "⚠️ GROUP BY Error: When using aggregate functions like COUNT, AVG, SUM, "
+            "all non-aggregated columns must be included in the GROUP BY clause.\n\n"
+            f"SQL attempted: {sql_query}\n\nTechnical error: {error_message}\n\n"
+            "💡 Tip: Try rephrasing your question."
+        )
+        return {"type": "error", "message": helpful_msg}
+
+    normalized_error = error_message.lower()
+    if (
+        "doesn't exist" in normalized_error
+        or "does not exist" in normalized_error
+        or "unknown column" in normalized_error
+        or "no such column" in normalized_error
+        or "no such table" in normalized_error
+        or "undefinedcolumn" in normalized_error
+        or "undefinedtable" in normalized_error
+    ):
+        helpful_msg = (
+            "⚠️ Table/Column Not Found: The query references a table or column that doesn't exist.\n\n"
+            f"SQL attempted: {sql_query}\n\nTechnical error: {error_message}\n\n"
+            "💡 Tip: Ask me to show you the available tables and columns."
+        )
+        return {"type": "error", "message": helpful_msg}
+
+    if "syntax error" in error_message.lower():
+        helpful_msg = (
+            f"⚠️ SQL Syntax Error: The generated query has a syntax problem.\n\n"
+            f"SQL attempted: {sql_query}\n\nTechnical error: {error_message}\n\n"
+            "💡 Tip: Try rephrasing your question."
+        )
+        return {"type": "error", "message": helpful_msg}
+
+    return {
+        "type": "error",
+        "message": f"Query execution failed: {error_message}",
+        "sql": sql_query,
+    }
+
+
+def execute_read_only_sql(sql_query: str, db, db_name: str) -> str:
+    cached = query_cache.get(sql_query, db_name)
+    if cached:
+        return f"SQL: `{sql_query}`\nOutput: {json.dumps(cached)}"
+
+    connection = None
+    try:
+        connection = db._engine.connect()
+        result_proxy = None
+        try:
+            result_proxy = connection.execute(text(sql_query))
+            columns = list(result_proxy.keys())
+            rows = result_proxy.fetchmany(MAX_RESULT_ROWS)
+            total_fetched = len(rows)
+
+            data = [
+                [str(cell) if cell is not None else '' for cell in row]
+                for row in rows
+            ]
+
+            output_data = {
+                "type": "select",
+                "data": data,
+                "columns": columns,
+                "row_count": total_fetched,
+                "limited": total_fetched == MAX_RESULT_ROWS,
+            }
+            query_cache.set(sql_query, db_name, output_data)
+            return f"SQL: `{sql_query}`\nOutput: {json.dumps(output_data)}"
+        finally:
+            if result_proxy is not None:
+                result_proxy.close()
+    finally:
+        if connection:
+            try:
+                connection.close()
+            except Exception as exc:
+                logger.warning("Error closing database connection: %s", exc)
+
+
+def use_ollama() -> bool:
+    return USE_OLLAMA.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def normalize_llm_text(content: Any) -> str:
+    if isinstance(content, str):
+        text_response = content.strip()
+    elif isinstance(content, list):
+        text_response = "".join(
+            (part.get("text", "") if isinstance(part, dict) else getattr(part, "text", "")) or ""
+            for part in content
+        ).strip()
+    else:
+        text_response = str(content).strip()
+
+    if not text_response:
+        raise ValueError("LLM returned an empty response.")
+
+    return text_response
+
+
+def strip_sql_comments(sql: str) -> str:
+    without_block_comments = re.sub(r"/\*.*?\*/", " ", sql, flags=re.DOTALL)
+    without_dash_comments = re.sub(r"(?m)--[^\r\n]*$", "", without_block_comments)
+    without_hash_comments = re.sub(r"(?m)#[^\r\n]*$", "", without_dash_comments)
+    return without_hash_comments
+
+
+def truncate_for_log(text: str, limit: int = 200) -> str:
+    compact_text = re.sub(r"\s+", " ", text).strip()
+    if len(compact_text) <= limit:
+        return compact_text
+    return compact_text[:limit].rstrip() + "..."
+
+
+def prepare_prompt_for_ollama(prompt: str) -> str:
+    sanitized_prompt = prompt.replace("\ufeff", "")
+    sanitized_prompt = re.sub(r"[^\x09\x0A\x0D\x20-\x7E]", " ", sanitized_prompt)
+    sanitized_prompt = re.sub(r"(?m)^\s*[-=*_]{8,}\s*$", "", sanitized_prompt)
+    sanitized_prompt = re.sub(r"\n{3,}", "\n\n", sanitized_prompt).strip()
+
+    ollama_suffix = (
+        "\n\nStrict SQL-only response rule:\n"
+        "Respond with exactly one read-only SQL query and nothing else.\n"
+        "Do not repeat or explain the instructions.\n"
+        "Do not describe allowed SQL keywords.\n"
+        "Do not wrap the query in quotes.\n"
+        "Do not add text like Here is the query or The generated result should be.\n"
+        "Valid response example:\n"
+        "SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = DATABASE()"
+    )
+    return sanitized_prompt + ollama_suffix
+
+
+def has_supported_read_only_start(text: str) -> bool:
+    return re.match(
+        r"^\s*(SELECT|WITH|SHOW|DESCRIBE|DESC|EXPLAIN|PRAGMA)\b(?=\s|\()",
+        text,
+        flags=re.IGNORECASE,
+    ) is not None
+
+
+def extract_sql_query(response_text: str) -> str:
+    cleaned_response = re.sub(r"<think>.*?</think>", "", response_text, flags=re.IGNORECASE | re.DOTALL).strip()
+    fenced_sql_match = re.search(r"```(?:sql)?\s*(.*?)```", cleaned_response, flags=re.IGNORECASE | re.DOTALL)
+    if fenced_sql_match:
+        cleaned_response = fenced_sql_match.group(1).strip()
+
+    json_sql_match = re.search(
+        r'"(?:sql|query)"\s*:\s*"((?:\\.|[^"\\])*)"',
+        cleaned_response,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    if json_sql_match:
+        cleaned_response = bytes(json_sql_match.group(1), "utf-8").decode("unicode_escape").strip()
+    else:
+        quoted_sql_match = None
+        for pattern in (
+            r'"((?:\\.|[^"\\])*)"',
+            r"`([^`]*)`",
+        ):
+            for match in re.finditer(pattern, cleaned_response, flags=re.DOTALL):
+                candidate = match.group(1)
+                if pattern.startswith(r'"'):
+                    candidate = bytes(candidate, "utf-8").decode("unicode_escape")
+                candidate = candidate.strip()
+                if has_supported_read_only_start(candidate):
+                    quoted_sql_match = candidate
+                    break
+            if quoted_sql_match:
+                break
+
+        if quoted_sql_match:
+            cleaned_response = quoted_sql_match
+        else:
+            sql_start_match = re.search(
+                r"\b(SELECT|WITH|SHOW|DESCRIBE|DESC|EXPLAIN|PRAGMA)\b(?=\s|\()",
+                cleaned_response,
+                flags=re.IGNORECASE,
+            )
+            if sql_start_match:
+                cleaned_response = cleaned_response[sql_start_match.start():].strip()
+
+    cleaned_response = re.sub(r"^\s*sql(?:\s+query)?\s*:\s*", "", cleaned_response, flags=re.IGNORECASE)
+    cleaned_response = re.sub(r"^\s*(?:answer|output)\s*:\s*", "", cleaned_response, flags=re.IGNORECASE)
+    cleaned_response = strip_sql_comments(cleaned_response).strip()
+
+    statements = [statement.strip() for statement in cleaned_response.split(";") if statement.strip()]
+    if len(statements) > 1:
+        remaining_segments = statements[1:]
+        contains_extra_sql = any(
+            re.search(
+                r"\b(SELECT|WITH|SHOW|DESCRIBE|DESC|EXPLAIN|PRAGMA|INSERT|UPDATE|DELETE|DROP|ALTER|CREATE|MERGE|TRUNCATE|GRANT|REVOKE)\b",
+                segment,
+                flags=re.IGNORECASE,
+            )
+            for segment in remaining_segments
+        )
+        if contains_extra_sql:
+            raise ValueError("LLM response contained multiple SQL statements.")
+        logger.warning("Discarding trailing non-SQL text from LLM response.")
+        cleaned_response = statements[0]
+    elif statements:
+        cleaned_response = statements[0]
+
+    cleaned_response = cleaned_response.rstrip(";").strip()
+    if not cleaned_response:
+        raise ValueError("LLM response did not contain a valid SQL query.")
+
+    if not has_supported_read_only_start(cleaned_response):
+        raise ValueError("LLM response did not start with a supported read-only SQL statement.")
+
+    return cleaned_response
+
+
+def call_ollama(prompt: str) -> str:
+    ollama_prompt = prepare_prompt_for_ollama(prompt)
+    response = requests.post(
+        OLLAMA_GENERATE_URL,
+        json={
+            "model": OLLAMA_MODEL,
+            "prompt": ollama_prompt,
+            "stream": False,
+        },
+        timeout=OLLAMA_TIMEOUT_SECONDS,
+    )
+    response.raise_for_status()
+    payload = response.json()
+    if not isinstance(payload, dict):
+        raise ValueError("Ollama returned a non-JSON response payload.")
+    return normalize_llm_text(payload.get("response"))
+
+
+def is_ollama_alive() -> bool:
+    if not use_ollama():
+        return False
+
+    try:
+        response = requests.get(OLLAMA_HEALTH_URL, timeout=OLLAMA_HEALTH_TIMEOUT_SECONDS)
+        response.raise_for_status()
+        payload = response.json()
+        if not isinstance(payload, dict):
+            raise ValueError("Ollama health check returned an invalid payload.")
+
+        models = payload.get("models", [])
+        if isinstance(models, list) and models:
+            model_names = [
+                model.get("name", "") if isinstance(model, dict) else str(model)
+                for model in models
+            ]
+            if not any(OLLAMA_MODEL in model_name for model_name in model_names):
+                logger.warning("Ollama is reachable but model '%s' is not available.", OLLAMA_MODEL)
+                return False
+
+        return True
+    except (requests.RequestException, ValueError) as exc:
+        logger.warning("Ollama health check failed: %s", exc)
+        return False
+
+
+def call_groq(prompt: str) -> str:
+    if not GROQ_API_KEY:
+        raise RuntimeError("GROQ_API_KEY is not configured.")
 
     llm = ChatGroq(
         api_key=SecretStr(str(GROQ_API_KEY)),
@@ -783,150 +1785,172 @@ Instructions:
         max_tokens=6000,
         stop_sequences=None,
     )
+    response = llm.invoke(prompt)
+    return normalize_llm_text(getattr(response, "content", response))
 
-    def get_schema(_):
-        return db.get_table_info()
 
-    def get_history(_):
-        return history_context
+def generate_llm_response(prompt: str, allow_ollama: bool = True) -> str:
+    if allow_ollama and use_ollama():
+        if is_ollama_alive():
+            for attempt in range(OLLAMA_MAX_RETRIES + 1):
+                try:
+                    logger.info(
+                        "Generating SQL with Ollama (attempt %s/%s).",
+                        attempt + 1,
+                        OLLAMA_MAX_RETRIES + 1,
+                    )
+                    return call_ollama(prompt)
+                except (requests.RequestException, ValueError) as exc:
+                    logger.warning(
+                        "Ollama generation failed on attempt %s/%s: %s",
+                        attempt + 1,
+                        OLLAMA_MAX_RETRIES + 1,
+                        exc,
+                    )
+            logger.warning("Ollama retries exhausted. Falling back to Groq.")
+        else:
+            logger.warning("Ollama is unavailable. Falling back to Groq.")
+    elif use_ollama() and not allow_ollama:
+        logger.info("Skipping Ollama and using Groq fallback for this generation attempt.")
+    else:
+        logger.info("USE_OLLAMA is disabled. Using Groq as the active LLM.")
 
-    return (
-        RunnablePassthrough.assign(schema=get_schema, history=get_history)
-        | prompt
-        | llm
-        | StrOutputParser()
-    )
+    try:
+        logger.info("Generating SQL with Groq fallback.")
+        return call_groq(prompt)
+    except Exception:
+        logger.exception("Groq generation failed.")
+        raise
+
+
+def get_sql_chain(db, question: str, chat_history: Optional[list] = None) -> str:
+    return build_sql_prompt(db, question, chat_history or [])
 
 
 def get_response(question: str, db, db_name: str, chat_history: Optional[list] = None):
     """Generate SQL via LLM, execute it, return structured response string."""
-    chain = get_sql_chain(db, chat_history or [])
-    connection = None
     sql_query = "N/A"
+    prompt = get_sql_chain(db, question, chat_history or [])
+    allow_ollama = True
 
     try:
-        response_text = chain.invoke({"question": question})
-        sql_query = response_text.strip()
+        for generation_attempt in range(2):
+            response_text = ""
+            try:
+                response_text = generate_llm_response(prompt, allow_ollama=allow_ollama)
+                sql_query = extract_sql_query(response_text)
+            except ValueError as exc:
+                if allow_ollama and use_ollama():
+                    logger.info("Ollama response was not usable as SQL. Using Groq fallback.")
+                    if response_text:
+                        logger.debug("Unusable Ollama response preview: %s", truncate_for_log(response_text))
+                    allow_ollama = False
+                    response_text = generate_llm_response(prompt, allow_ollama=False)
+                    sql_query = extract_sql_query(response_text)
+                else:
+                    raise
 
-        # Strip markdown fences if LLM adds them
-        if sql_query.startswith("```"):
-            sql_query = re.sub(r'^```[\w]*\n?', '', sql_query)
-            sql_query = re.sub(r'\n?```$', '', sql_query)
-            sql_query = sql_query.strip()
+            is_safe, error_msg = validate_sql_safety(sql_query)
+            if not is_safe:
+                if allow_ollama and use_ollama():
+                    logger.warning(
+                        "Ollama SQL failed safety validation. Falling back to Groq. SQL: %s | Reason: %s",
+                        sql_query,
+                        error_msg,
+                    )
+                    allow_ollama = False
+                    response_text = generate_llm_response(prompt, allow_ollama=False)
+                    sql_query = extract_sql_query(response_text)
+                    is_safe, error_msg = validate_sql_safety(sql_query)
+                if not is_safe:
+                    return json.dumps({
+                        "type": "error",
+                        "message": f"❌ Security Check Failed: {error_msg}",
+                        "sql": sql_query,
+                    })
 
-        sql_query = sql_query.rstrip(';')
-
-        is_safe, error_msg = validate_sql_safety(sql_query)
-        if not is_safe:
-            return json.dumps({
-                "type": "error",
-                "message": f"❌ Security Check Failed: {error_msg}",
-                "sql": sql_query,
-            })
-
-        if not is_read_only_sql(sql_query):
-            return json.dumps({
-                "type": "error",
-                "sql": sql_query,
-                "message": "Write operations are temporarily disabled for security reasons. Only read-only queries are allowed.",
-            })
-
-        sql_upper = sql_query.upper().strip()
-        sql_type = 'select' if sql_upper.startswith(("SELECT", "WITH", "SHOW", "DESCRIBE", "DESC", "EXPLAIN")) else 'other'
-
-        if sql_type == 'select':
-            # Check cache
-            cached = query_cache.get(sql_query, db_name)
-            if cached:
-                return f"SQL: `{sql_query}`\nOutput: {json.dumps(cached)}"
+            if not is_read_only_sql(sql_query):
+                if allow_ollama and use_ollama():
+                    logger.warning(
+                        "Ollama SQL was not read-only. Falling back to Groq. SQL: %s",
+                        sql_query,
+                    )
+                    allow_ollama = False
+                    response_text = generate_llm_response(prompt, allow_ollama=False)
+                    sql_query = extract_sql_query(response_text)
+                    is_safe, error_msg = validate_sql_safety(sql_query)
+                    if not is_safe:
+                        return json.dumps({
+                            "type": "error",
+                            "message": f"❌ Security Check Failed: {error_msg}",
+                            "sql": sql_query,
+                        })
+                    if is_read_only_sql(sql_query):
+                        pass
+                    else:
+                        return json.dumps({
+                            "type": "error",
+                            "sql": sql_query,
+                            "message": "Write operations are temporarily disabled for security reasons. Only read-only queries are allowed.",
+                        })
+                if not is_read_only_sql(sql_query):
+                    return json.dumps({
+                        "type": "error",
+                        "sql": sql_query,
+                        "message": "Write operations are temporarily disabled for security reasons. Only read-only queries are allowed.",
+                    })
 
             try:
-                connection = db._engine.connect()
-                result_proxy = None
-                try:
-                    result_proxy = connection.execute(text(sql_query))
-                    columns = list(result_proxy.keys())
-                    # Enforce row limit
-                    rows = result_proxy.fetchmany(MAX_RESULT_ROWS)
-                    total_fetched = len(rows)
-
-                    data = [
-                        [str(cell) if cell is not None else '' for cell in row]
-                        for row in rows
-                    ]
-
-                    output_data = {
-                        "type": "select",
-                        "data": data,
-                        "columns": columns,
-                        "row_count": total_fetched,
-                        "limited": total_fetched == MAX_RESULT_ROWS,
-                    }
-                    query_cache.set(sql_query, db_name, output_data)
-                    return f"SQL: `{sql_query}`\nOutput: {json.dumps(output_data)}"
-                finally:
-                    if result_proxy is not None:
-                        result_proxy.close()
+                return execute_read_only_sql(sql_query, db, db_name)
             except Exception as select_error:
                 error_message = str(select_error)
-                if "only_full_group_by" in error_message or "1140" in error_message:
-                    helpful_msg = (
-                        "⚠️ GROUP BY Error: When using aggregate functions like COUNT, AVG, SUM, "
-                        "all non-aggregated columns must be included in the GROUP BY clause.\n\n"
-                        f"SQL attempted: {sql_query}\n\nTechnical error: {error_message}\n\n"
-                        "💡 Tip: Try rephrasing your question."
+                if generation_attempt == 0 and should_retry_sql_generation(error_message):
+                    logger.warning(
+                        "Retrying SQL generation after execution failure. SQL: %s | Error: %s",
+                        sql_query,
+                        error_message,
                     )
-                    output_data = {"type": "error", "message": helpful_msg}
-                elif "doesn't exist" in error_message.lower() or "unknown column" in error_message.lower():
-                    helpful_msg = (
-                        "⚠️ Table/Column Not Found: The query references a table or column that doesn't exist.\n\n"
-                        f"SQL attempted: {sql_query}\n\nTechnical error: {error_message}\n\n"
-                        "💡 Tip: Ask me to show you the available tables and columns."
+                    prompt = build_sql_prompt(
+                        db,
+                        question,
+                        chat_history or [],
+                        failed_sql=sql_query,
+                        execution_error=error_message,
                     )
-                    output_data = {"type": "error", "message": helpful_msg}
-                elif "syntax error" in error_message.lower():
-                    helpful_msg = (
-                        f"⚠️ SQL Syntax Error: The generated query has a syntax problem.\n\n"
-                        f"SQL attempted: {sql_query}\n\nTechnical error: {error_message}\n\n"
-                        "💡 Tip: Try rephrasing your question."
-                    )
-                    output_data = {"type": "error", "message": helpful_msg}
-                else:
-                    output_data = {
-                        "type": "error",
-                        "message": f"Query execution failed: {error_message}",
-                        "sql": sql_query,
-                    }
-            finally:
-                if connection:
-                    try:
-                        connection.close()
-                    except Exception as e:
-                        print(f"Error closing connection: {e}")
-            return f"SQL: `{sql_query}`\nOutput: {json.dumps(output_data)}"
+                    if use_ollama():
+                        allow_ollama = False
+                    continue
 
-        else:
-            return json.dumps({
-                "type": "error",
-                "sql": sql_query,
-                "message": "Only read-only SQL queries are supported in production mode.",
-            })
+                output_data = format_query_execution_error(sql_query, error_message)
+                return f"SQL: `{sql_query}`\nOutput: {json.dumps(output_data)}"
 
-    except Exception as e:
-        print(f"Error in get_response: {str(e)}")
+    except Exception as exc:
+        logger.exception("Error while generating or executing SQL: %s", exc)
         return json.dumps({
             "type": "error",
-            "message": f"Error: {str(e)}",
+            "message": f"Error: {str(exc)}",
         })
-    finally:
-        if connection and not connection.closed:
-            try:
-                connection.close()
-            except Exception:
-                pass
+
+    return json.dumps({
+        "type": "error",
+        "message": "Error: SQL generation finished without a result.",
+    })
 
 
-def run_chat_query(question: str, db_uri: str, db_name: str, chat_history: Optional[list] = None) -> str:
+def run_chat_query(
+    question: str,
+    db_uri: str,
+    db_name: str,
+    db_type: str,
+    chat_history: Optional[list] = None,
+) -> str:
+    if not source_supports_query(db_type):
+        output_data = {
+            "type": "error",
+            "message": f"Natural-language querying is not enabled for {db_type} sources yet.",
+        }
+        return f"SQL: `N/A`\nOutput: {json.dumps(output_data)}"
+
     db = SQLDatabase(engine_cache.get(db_uri))
     return get_response(question=question, db=db, db_name=db_name, chat_history=chat_history or [])
 
@@ -1061,20 +2085,8 @@ async def list_databases(
     current_user: User = Depends(get_current_user),
 ):
     try:
-        import mysql.connector
-        connection = mysql.connector.connect(
-            host=config.host, port=config.port,
-            user=config.user, password=config.password,
-        )
-        cursor = connection.cursor()
-        cursor.execute("SHOW DATABASES")
-        result: list[Any] = cursor.fetchall()
-        databases = [str(row[0]) for row in result]
-        system_dbs = {'information_schema', 'mysql', 'performance_schema', 'sys'}
-        user_databases = [db for db in databases if db not in system_dbs]
-        cursor.close()
-        connection.close()
-        return {"success": True, "databases": user_databases, "total": len(user_databases)}
+        databases = list_available_databases_for_source(config)
+        return {"success": True, "databases": databases, "total": len(databases)}
     except Exception as e:
         return {"success": False, "error": str(e)}
 
@@ -1085,21 +2097,12 @@ async def create_database(
     current_user: User = Depends(get_current_user),
 ):
     try:
-        import mysql.connector
-        if not re.match(r'^[a-zA-Z0-9_]+$', request.database_name):
-            raise ValueError("Database name can only contain letters, numbers, and underscores")
-        connection = mysql.connector.connect(
-            host=request.host, port=request.port,
-            user=request.user, password=request.password,
-        )
-        cursor = connection.cursor()
-        cursor.execute(f"CREATE DATABASE IF NOT EXISTS `{request.database_name}`")
-        connection.commit()
-        cursor.close()
-        connection.close()
-        return {"success": True, "message": f"Database '{request.database_name}' created successfully", "database": request.database_name}
-    except ValueError as ve:
-        return {"success": False, "error": str(ve)}
+        create_database_for_source(request)
+        return {
+            "success": True,
+            "message": f"Database '{request.database_name}' created successfully",
+            "database": request.database_name,
+        }
     except Exception as e:
         return {"success": False, "error": str(e)}
 
@@ -1115,28 +2118,53 @@ async def connect_db(
     The client MUST store this token and send it as X-DB-Session header
     on every subsequent API call that needs database access.
     """
-    print(f"Connect request: host={config.host}, port={config.port}, database={config.database}")
+    print(
+        f"Connect request: type={config.type}, host={config.host}, port={config.port}, "
+        f"database={config.database or config.path}"
+    )
     try:
-        db_uri = (
-            f"mysql+mysqlconnector://{config.user}:{config.password}"
-            f"@{config.host}:{config.port}/{config.database}"
-        )
-        _validate_database_connection(db_uri)
-        token = db_session_store.create(current_user.id, db_uri, config.database, db)
+        source_type, db_uri, db_name = build_connection_artifacts(config)
+        validate_source_connection(db_uri, source_type, db_name)
+        token = db_session_store.create(current_user.id, db_uri, db_name, source_type, db)
         print("Database connection successful, session token issued")
-        return {"success": True, "database": config.database, "session_token": token}
+        return {
+            "success": True,
+            "database": db_name,
+            "type": source_type,
+            "supports_query": source_supports_query(source_type),
+            "session_token": token,
+        }
     except Exception as e:
         print(f"Database connection failed: {str(e)}")
         return {"success": False, "error": str(e)}
 
 
-def _validate_database_connection(db_uri: str):
-    test_engine = create_engine(db_uri, pool_pre_ping=True)
+@app.post("/api/connect-file")
+async def connect_file_source(
+    type: str = Form(...),
+    database: str = Form(""),
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     try:
-        with test_engine.connect() as connection:
-            connection.execute(text("SELECT 1"))
-    finally:
-        test_engine.dispose()
+        source_type = normalize_source_type(type)
+        if source_type not in FILE_SOURCE_TYPES:
+            raise ValueError("This endpoint only supports CSV and Excel uploads.")
+
+        db_uri = create_sql_snapshot_for_uploaded_file(source_type, file, current_user.id)
+        db_name = database or file.filename or f"{source_type}_upload"
+        validate_source_connection(db_uri, source_type, db_name)
+        token = db_session_store.create(current_user.id, db_uri, db_name, source_type, db)
+        return {
+            "success": True,
+            "database": db_name,
+            "type": source_type,
+            "supports_query": True,
+            "session_token": token,
+        }
+    except Exception as e:
+        return {"success": False, "error": str(e)}
 
 
 @app.post("/api/disconnect")
@@ -1158,16 +2186,40 @@ async def get_connection_status(
     current_user: User = Depends(get_current_user),
 ):
     if not x_db_session:
-        return {"success": True, "connected": False, "database": None}
+        return {
+            "success": True,
+            "connected": False,
+            "database": None,
+            "type": None,
+            "supports_query": False,
+        }
     session = db_session_store.get(x_db_session, db, current_user.id)
     if session is None:
-        return {"success": True, "connected": False, "database": None}
+        return {
+            "success": True,
+            "connected": False,
+            "database": None,
+            "type": None,
+            "supports_query": False,
+        }
     try:
-        _validate_database_connection(session["db_uri"])
-        return {"success": True, "connected": True, "database": session["db_name"]}
+        validate_source_connection(session["db_uri"], session["db_type"], session["db_name"])
+        return {
+            "success": True,
+            "connected": True,
+            "database": session["db_name"],
+            "type": session["db_type"],
+            "supports_query": source_supports_query(session["db_type"]),
+        }
     except Exception:
         db_session_store.delete(x_db_session, db, current_user.id)
-        return {"success": True, "connected": False, "database": None}
+        return {
+            "success": True,
+            "connected": False,
+            "database": None,
+            "type": None,
+            "supports_query": False,
+        }
 
 
 # ─────────────────────────────────────────────
@@ -1179,21 +2231,15 @@ async def get_table_schema(
     db_session: Dict[str, Any] = Depends(get_db_session),
 ):
     try:
-        db = SQLDatabase(engine_cache.get(db_session["db_uri"]))
-        connection = db._engine.connect()
-        result = connection.execute(text(f"DESCRIBE `{table_name}`"))
-        columns_data = result.fetchall()
-        columns = []
-        for row in columns_data:
-            columns.append({
-                "name": row[0],
-                "type": row[1],
-                "nullable": row[2] == "YES",
-                "key": row[3] if row[3] else None,
-                "default": row[4],
-                "autoincrement": "auto_increment" in str(row[5]).lower() if row[5] else False,
-            })
-        connection.close()
+        source_type = normalize_source_type(db_session["db_type"])
+        if source_type in SQL_SOURCE_TYPES:
+            columns = get_sql_table_schema(db_session["db_uri"], table_name)
+        elif source_type == "mongodb":
+            columns = get_mongodb_table_schema(db_session["db_uri"], db_session["db_name"], table_name)
+        elif source_type == "redis":
+            columns = get_redis_table_schema()
+        else:
+            raise ValueError(f"Unsupported source type: {source_type}")
         return {"success": True, "table_name": table_name, "columns": columns}
     except Exception as e:
         return {"success": False, "error": str(e)}
@@ -1202,26 +2248,15 @@ async def get_table_schema(
 @app.get("/api/database-tables")
 async def get_database_tables(db_session: Dict[str, Any] = Depends(get_db_session)):
     try:
-        db = SQLDatabase(engine_cache.get(db_session["db_uri"]))
-        connection = db._engine.connect()
-        result = connection.execute(text("SHOW TABLES"))
-        table_names = [row[0] for row in result.fetchall()]
-        tables_info = []
-        for table_name in table_names:
-            try:
-                count_result = connection.execute(text(f"SELECT COUNT(*) FROM `{table_name}`"))
-                count_row = count_result.fetchone()
-                row_count = count_row[0] if count_row else 0
-                status_result = connection.execute(text(f"SHOW TABLE STATUS LIKE '{table_name}'"))
-                status_row = status_result.fetchone()
-                last_updated = "just now"
-                if status_row and len(status_row) > 12 and status_row[12]:
-                    last_updated = str(status_row[12])
-                tables_info.append({"name": table_name, "rowCount": row_count, "lastUpdated": last_updated})
-            except Exception as table_error:
-                print(f"Error processing table {table_name}: {str(table_error)}")
-                tables_info.append({"name": table_name, "rowCount": 0, "lastUpdated": "unknown"})
-        connection.close()
+        source_type = normalize_source_type(db_session["db_type"])
+        if source_type in SQL_SOURCE_TYPES:
+            tables_info = get_sql_tables_info(db_session["db_uri"])
+        elif source_type == "mongodb":
+            tables_info = get_mongodb_tables_info(db_session["db_uri"], db_session["db_name"])
+        elif source_type == "redis":
+            tables_info = get_redis_tables_info(db_session["db_uri"])
+        else:
+            raise ValueError(f"Unsupported source type: {source_type}")
         return {"success": True, "tables": tables_info, "total": len(tables_info)}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -1245,14 +2280,15 @@ async def chat_endpoint(
             chat_request.question,
             db_uri,
             db_name,
+            db_session["db_type"],
             chat_request.chat_history,
         )
         return {"success": True, "response": response}
     except HTTPException as e:
         raise e
-    except Exception as e:
-        print(f"Chat endpoint error: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Unexpected error: {str(e)}")
+    except Exception as exc:
+        logger.exception("Chat endpoint error: %s", exc)
+        raise HTTPException(status_code=500, detail=f"Unexpected error: {str(exc)}")
 
 
 # ─────────────────────────────────────────────
@@ -1794,7 +2830,6 @@ async def migrate_dashboards(
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=str(e))
-
 
 @app.on_event("shutdown")
 async def shutdown_event():

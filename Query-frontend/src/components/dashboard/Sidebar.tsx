@@ -25,6 +25,7 @@ interface SidebarProps {
   onToggleCollapse: () => void;
   isConnected: boolean;
   connectedDatabase: string | null;
+  databaseType: string | null;
   onOpenModal: () => void;
   onNewChat: () => void;
   onDeleteConnection: () => void;
@@ -42,6 +43,7 @@ const Sidebar = memo(({
   onToggleCollapse, 
   isConnected, 
   connectedDatabase, 
+  databaseType,
   onOpenModal, 
   onNewChat, 
   onDeleteConnection, 
@@ -86,16 +88,17 @@ const Sidebar = memo(({
               <div className="p-3 border-b border-border">
                 {isConnected ? (
                   <div className="space-y-3">
-                    {/* Connection Info Card */}
-                  
-                      <div className="flex items-start justify-between gap-2">
-                        <div className="flex items-center gap-2 flex-1 min-w-0">
-                         
-                          <div className="flex-1 min-w-0">
-                          
-                         
+                    <div className="rounded-md border border-border bg-background/70 px-3 py-2">
+                      <div className="flex items-start gap-2">
+                        <div className="mt-1 h-2 w-2 rounded-full bg-green-500" />
+                        <div className="min-w-0 flex-1">
+                          <p className="text-xs font-medium text-foreground truncate">
+                            {connectedDatabase || 'Connected source'}
+                          </p>
+                          <p className="text-[11px] text-muted-foreground">
+                            {databaseType || 'Database source'}
+                          </p>
                         </div>
-                        
                       </div>
                     </div>
 
@@ -207,41 +210,18 @@ const Sidebar = memo(({
                           currentChatId === chat.id ? 'bg-brand-50 dark:bg-brand-900/20' : ''
                         }`}
                       >
-                        <button
-                          onClick={() => onChatSelect(chat.id)}
-                          className="w-full text-left"
-                        >
-                          <div className="flex items-start gap-2">
-                            <div className="flex flex-col items-center gap-1 flex-shrink-0">
-                              <MessageSquare
-                                size={14}
-                                className={`${
-                                  currentChatId === chat.id ? 'text-brand-600' : 'text-muted-foreground'
-                                }`}
-                              />
-                              
-                              <DropdownMenu>
-                                <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
-                                  <button className="p-0.5 hover:bg-gray-200 rounded transition-colors">
-                                    <MoreVertical size={12} className="text-gray-600" />
-                                  </button>
-                                </DropdownMenuTrigger>
-                                <DropdownMenuContent align="start" className="w-48">
-                                  <DropdownMenuItem
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      if (window.confirm(`Delete chat "${chat.title}"?`)) {
-                                        onDeleteChat(chat.id);
-                                      }
-                                    }}
-                                    className="text-red-600 focus:text-red-600 focus:bg-red-50 cursor-pointer"
-                                  >
-                                    <Trash2 size={14} className="mr-2" />
-                                    Delete Chat
-                                  </DropdownMenuItem>
-                                </DropdownMenuContent>
-                              </DropdownMenu>
-                            </div>
+                        <div className="flex items-start gap-2">
+                          <button
+                            type="button"
+                            onClick={() => onChatSelect(chat.id)}
+                            className="flex flex-1 min-w-0 items-start gap-2 text-left"
+                          >
+                            <MessageSquare
+                              size={14}
+                              className={`mt-0.5 flex-shrink-0 ${
+                                currentChatId === chat.id ? 'text-brand-600' : 'text-muted-foreground'
+                              }`}
+                            />
 
                             <div className="flex-1 min-w-0">
                               <h4 className={`font-medium text-xs truncate ${
@@ -258,8 +238,33 @@ const Sidebar = memo(({
                                 })}
                               </p>
                             </div>
-                          </div>
-                        </button>
+                          </button>
+
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <button
+                                type="button"
+                                aria-label={`Open actions for ${chat.title}`}
+                                className="rounded p-0.5 transition-colors hover:bg-gray-200"
+                              >
+                                <MoreVertical size={12} className="text-gray-600" />
+                              </button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="start" className="w-48">
+                              <DropdownMenuItem
+                                onClick={() => {
+                                  if (window.confirm(`Delete chat "${chat.title}"?`)) {
+                                    onDeleteChat(chat.id);
+                                  }
+                                }}
+                                className="text-red-600 focus:text-red-600 focus:bg-red-50 cursor-pointer"
+                              >
+                                <Trash2 size={14} className="mr-2" />
+                                Delete Chat
+                              </DropdownMenuItem>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                        </div>
                       </div>
                     ))
                   )}
@@ -417,6 +422,7 @@ const Sidebar = memo(({
     prevProps.isCollapsed === nextProps.isCollapsed &&
     prevProps.isConnected === nextProps.isConnected &&
     prevProps.connectedDatabase === nextProps.connectedDatabase &&
+    prevProps.databaseType === nextProps.databaseType &&
     prevProps.chatSessions === nextProps.chatSessions &&
     prevProps.currentChatId === nextProps.currentChatId &&
     prevProps.userId === nextProps.userId &&
