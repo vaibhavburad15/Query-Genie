@@ -1,484 +1,235 @@
-<p align="center">
-  <h1 align="center">🧞 Query Genie</h1>
-  <p align="center">
-    <strong>Talk to your database in plain English — powered by AI.</strong>
-  </p>
-  <p align="center">
-    <a href="#-features">Features</a> •
-    <a href="#-tech-stack">Tech Stack</a> •
-    <a href="#-getting-started">Getting Started</a> •
-    <a href="#-api-reference">API Reference</a> •
-    <a href="#-project-structure">Project Structure</a> •
-    <a href="#-license">License</a>
-  </p>
-  <p align="center">
-    <img src="https://img.shields.io/badge/python-3.10+-blue?logo=python&logoColor=white" alt="Python">
-    <img src="https://img.shields.io/badge/FastAPI-0.115-009688?logo=fastapi&logoColor=white" alt="FastAPI">
-    <img src="https://img.shields.io/badge/React-18-61DAFB?logo=react&logoColor=black" alt="React">
-    <img src="https://img.shields.io/badge/TypeScript-5.8-3178C6?logo=typescript&logoColor=white" alt="TypeScript">
-    <img src="https://img.shields.io/badge/Vite-5-646CFF?logo=vite&logoColor=white" alt="Vite">
-    <img src="https://img.shields.io/badge/LangChain-0.3-1C3C3C?logo=langchain&logoColor=white" alt="LangChain">
-    <img src="https://img.shields.io/badge/license-MIT-green" alt="License">
-  </p>
-</p>
+# Query Genie
 
----
+Query Genie is an AI database assistant that lets users ask questions in plain English, generates read-only SQL from the active schema, executes the query, and presents the result as tables, charts, saved favorites, history, and custom dashboards.
 
-## 📖 Overview
+The project is split into a FastAPI backend and a React/Vite frontend.
 
-**Query Genie** is an intelligent database assistant that lets users interact with MySQL databases using natural language. Powered by **Groq's LLaMA 3.3 70B** model via **LangChain**, it translates everyday English questions into optimized SQL queries, executes them safely, and presents results in beautiful, interactive tables — all through a modern React dashboard.
+## Project Snapshot
 
----
+- Natural-language SQL chat for SQL databases, SQLite files, CSV uploads, and Excel uploads.
+- Metadata browsing for MongoDB and Redis.
+- Email OTP signup, password hashing, bearer auth tokens, and per-user database session tokens.
+- Query result tables, chart visualizations, CSV/JSON export, favorites, chat sessions, query history, and custom dashboards.
+- LLM generation through local Ollama when enabled, with Groq/LangChain support available through environment configuration.
 
-## ✨ Features
+## Tech Stack
 
-| Category | Feature | Description |
-|----------|---------|-------------|
-| 🤖 **AI Chat** | Natural Language to SQL | Ask questions in plain English; AI converts them to SQL automatically |
-| 🤖 **AI Chat** | Context-Aware Conversations | Maintains last 5 interactions for smarter query generation |
-| 🤖 **AI Chat** | Chat Sessions | Save, rename, and manage multiple conversation sessions |
-| 🗄️ **Database** | MySQL Support | Connect to any MySQL database with full CRUD operations |
-| 🗄️ **Database** | Database Browser | List databases, create new ones, browse tables & schemas |
-| 🗄️ **Database** | Table Schema Viewer | Inspect columns, types, keys, and constraints for any table |
-| 📊 **Visualization** | Interactive Data Tables | Sort, search, and paginate query results |
-| 📊 **Visualization** | Custom Dashboards | Create dashboards with line, bar, pie, area & scatter charts |
-| 📊 **Visualization** | Drag & Drop Charts | Rearrange dashboard charts with drag-and-drop (dnd-kit) |
-| 📊 **Visualization** | Export Results | Export query results to CSV format |
-| 🔐 **Security** | Email OTP Verification | Secure sign-up with 6-digit OTP sent via Gmail |
-| 🔐 **Security** | Bcrypt Password Hashing | Industry-standard password encryption |
-| 🔐 **Security** | Destructive SQL Warnings | Confirmation dialog before `DELETE`, `DROP`, `UPDATE`, `ALTER`, `TRUNCATE` |
-| 🔐 **Security** | SQL Injection Protection | Blocks multi-statement queries, comment injection & unsafe patterns |
-| 🔐 **Security** | Rate Limiting | API-level throttling with SlowAPI (login, OTP, chat) |
-| ⚡ **Performance** | Query Caching | In-memory cache with 5-minute TTL for repeated queries |
-| ⚡ **Performance** | Connection Pooling | SQLAlchemy pool with pre-ping, recycle & overflow settings |
-| ⚡ **Performance** | Code Splitting | Lazy-loaded React pages for faster initial load |
-| 🎨 **UI/UX** | Dark / Light Theme | Toggle between themes with system preference detection |
-| 🎨 **UI/UX** | Responsive Design | Mobile-friendly layout built with Tailwind CSS + shadcn/ui |
-| ⭐ **Extras** | Favorite Queries | Save & tag frequently used queries for quick access |
-| ⭐ **Extras** | Query History & Stats | Track execution history, success rates & performance metrics |
-| ⭐ **Extras** | User Settings | Customizable preferences (theme, language, results per page) |
+| Area | Tools |
+| --- | --- |
+| Frontend | React 18, TypeScript, Vite, Tailwind CSS, shadcn/ui, Radix UI |
+| Data UI | Recharts, dnd-kit, html2canvas |
+| API | FastAPI, Pydantic, SlowAPI |
+| Database layer | SQLAlchemy, SQLite internal storage, MySQL/PostgreSQL/MariaDB/Oracle/SQL Server/Db2/SQLite connectors |
+| File sources | CSV, Excel through temporary SQLite snapshots |
+| Auth | Passlib bcrypt, bearer tokens, email OTP |
+| LLM | Ollama, Groq, LangChain |
 
----
+## Supported Sources
 
-## 🛠️ Tech Stack
+| Source | Query chat | Browse/list | Create database | Notes |
+| --- | --- | --- | --- | --- |
+| MySQL | Yes | Yes | Yes | Default guided source |
+| PostgreSQL | Yes | Yes | Yes | Includes custom handling for `vector` reflection |
+| MariaDB | Yes | Yes | Yes | Uses MySQL-compatible connection flow |
+| Microsoft SQL Server | Yes | Yes | No | Requires SQL Server ODBC driver |
+| Oracle Database | Yes | Direct connection | No | Uses service name |
+| IBM Db2 | Yes | Direct connection | No | Requires Db2 Python driver support |
+| SQLite | Yes | Direct file path | No | Local `.db` or `.sqlite` path |
+| CSV | Yes | Uploaded file | No | Staged as a temporary SQLite database |
+| Excel | Yes | Uploaded workbook | No | Each sheet becomes a queryable table |
+| MongoDB | No | Yes | No | Metadata browsing only |
+| Redis | No | Active DB metadata | No | Metadata browsing only |
 
-### Backend
+## Architecture
 
-| Technology | Purpose |
-|------------|---------|
-| [FastAPI](https://fastapi.tiangolo.com/) | High-performance Python API framework |
-| [LangChain](https://langchain.com/) | LLM orchestration & prompt chaining |
-| [Groq](https://groq.com/) (LLaMA 3.3 70B) | Ultra-fast LLM inference |
-| [SQLAlchemy](https://www.sqlalchemy.org/) | ORM & database connection management |
-| [SQLite](https://www.sqlite.org/) | Internal user/session storage |
-| [MySQL Connector](https://dev.mysql.com/doc/connector-python/en/) | User database connectivity |
-| [Pydantic](https://docs.pydantic.dev/) | Request/response validation |
-| [SlowAPI](https://github.com/laurentS/slowapi) | Rate limiting middleware |
-| [Passlib + Bcrypt](https://passlib.readthedocs.io/) | Password hashing |
-
-### Frontend
-
-| Technology | Purpose |
-|------------|---------|
-| [React 18](https://react.dev/) | UI framework |
-| [TypeScript](https://www.typescriptlang.org/) | Type-safe JavaScript |
-| [Vite](https://vitejs.dev/) | Build tool & dev server |
-| [Tailwind CSS](https://tailwindcss.com/) | Utility-first CSS framework |
-| [shadcn/ui](https://ui.shadcn.com/) | Accessible component library (Radix UI) |
-| [Recharts](https://recharts.org/) | Chart/visualization library |
-| [React Router](https://reactrouter.com/) | Client-side routing |
-| [TanStack Query](https://tanstack.com/query) | Server state management |
-| [dnd-kit](https://dndkit.com/) | Drag and drop toolkit |
-| [Zod](https://zod.dev/) | Schema validation |
-
----
-
-## 🏗️ Architecture
-
-```
-┌──────────────────────────────┐
-│         React Frontend       │
-│  (Vite + TypeScript + SWC)   │
-│                              │
-│  Auth ─── Chat ─── Dashboard │
-│   │        │          │      │
-│   └────────┴──────────┘      │
-│            │ Axios            │
-└────────────┼─────────────────┘
-             │ REST API
-┌────────────┼─────────────────┐
-│         FastAPI Backend      │
-│                              │
-│  ┌─────────┐  ┌───────────┐  │
-│  │ LangChain│  │ SQLAlchemy│  │
-│  │ + Groq  │  │    ORM    │  │
-│  └────┬────┘  └─────┬─────┘  │
-│       │             │        │
-│  NL → SQL      Query Exec   │
-└───────┼─────────────┼────────┘
-        │             │
-   ┌────┴────┐   ┌────┴────┐
-   │  Groq   │   │  MySQL  │
-   │  Cloud  │   │   DB    │
-   └─────────┘   └─────────┘
+```text
+React/Vite frontend
+  - auth pages
+  - landing page
+  - chat dashboard
+  - custom dashboard builder
+        |
+        | REST API with bearer auth and X-DB-Session
+        v
+FastAPI backend
+  - user auth and OTP
+  - per-user source sessions
+  - schema inspection
+  - LLM prompt generation
+  - read-only SQL execution
+  - favorites, history, settings, dashboards
+        |
+        +-- Internal SQLite: users, sessions, history, dashboards
+        +-- User data sources: SQL databases, files, MongoDB, Redis
+        +-- LLM providers: Ollama or Groq
 ```
 
----
+## Prerequisites
 
-## 🚀 Getting Started
+- Python 3.10+
+- Node.js 18+ and npm
+- A database or file source to connect
+- Optional: local Ollama server and model
+- Optional: Groq API key
+- Optional: Gmail app password for email OTP signup
 
-### Prerequisites
+Some database drivers need system-level setup. SQL Server needs an ODBC driver, and enterprise databases such as Oracle or Db2 may need native client dependencies depending on your environment.
 
-- **Python** 3.10+
-- **Node.js** 18+ & npm
-- **MySQL** 5.7+ (for the database you want to query)
-- **Groq API Key** — [Get one free](https://console.groq.com/)
-- **Gmail App Password** — [Create one](https://myaccount.google.com/apppasswords) (requires 2FA enabled)
+## Backend Setup
 
-### 1. Clone the Repository
+From the repository root:
 
 ```bash
-git clone https://github.com/vaibhavburad15/Query-Genie.git
-cd Query-Genie
+cd backend
+python -m venv .venv
 ```
 
-### 2. Backend Setup
+Activate the environment:
 
 ```bash
-# Create and activate a virtual environment (recommended)
-python -m venv venv
+# Windows PowerShell
+.\.venv\Scripts\Activate.ps1
 
-# Windows
-venv\Scripts\activate
-# macOS / Linux
-source venv/bin/activate
+# macOS/Linux
+source .venv/bin/activate
+```
 
-# Install dependencies
+Install dependencies:
+
+```bash
 pip install -r requirements.txt
 ```
 
-#### Configure Environment Variables
-
-Create a `.env` file inside the `backend/` directory:
+Create `backend/.env`:
 
 ```env
-# Groq API Configuration
+# LLM configuration
+USE_OLLAMA=true
+OLLAMA_BASE_URL=http://127.0.0.1:11434
+OLLAMA_MODEL=deepseek-coder
 GROQ_API_KEY=your_groq_api_key_here
 
-# Email Configuration (Gmail SMTP)
+# Email OTP configuration
 EMAIL_HOST_USER=your_email@gmail.com
 EMAIL_HOST_PASSWORD=your_gmail_app_password_here
+
+# Optional
+AUTH_SESSION_TTL=604800
 ```
 
-> **Note:** For Gmail, you must enable **2-Factor Authentication** first, then create an [App Password](https://support.google.com/accounts/answer/185833). Regular passwords will not work.
-
-#### Start the Backend Server
+Start the API:
 
 ```bash
-cd backend
 uvicorn backend:app --reload --port 8000
 ```
 
-The API will be running at **`http://localhost:8000`**  
-Interactive docs available at **`http://localhost:8000/docs`** (Swagger UI)
+The API runs at `http://localhost:8000`, and Swagger docs are available at `http://localhost:8000/docs`.
 
-### 3. Frontend Setup
+## Frontend Setup
+
+Open a second terminal from the repository root:
 
 ```bash
-# Open a new terminal
 cd Query-frontend
-
-# Install dependencies
 npm install
+```
 
-# Start development server
+The frontend defaults to `http://localhost:8000` for the API. If your backend runs elsewhere, create `Query-frontend/.env.local`:
+
+```env
+VITE_API_URL=http://localhost:8000
+```
+
+Start Vite:
+
+```bash
 npm run dev
 ```
 
-The app will be running at **`http://localhost:5173`**
+The Vite dev server is configured for `http://localhost:8080`.
 
----
+## Main Routes
 
-## 🗄️ Database Configuration
+| Route | Description |
+| --- | --- |
+| `/` | Landing page |
+| `/auth` | Login/signup with OTP signup flow |
+| `/dashboard` | Protected chat dashboard |
+| `/custom-dashboard` | Protected dashboard builder |
 
-### Connecting to a MySQL Database
+## Important API Endpoints
 
-1. Log in to Query Genie
-2. Click the **"Connect Database"** button on the dashboard
-3. Enter your MySQL credentials:
+| Method | Endpoint | Purpose |
+| --- | --- | --- |
+| `POST` | `/api/send-otp` | Send signup OTP |
+| `POST` | `/api/signup` | Create user and auth session |
+| `POST` | `/api/login` | Login and return bearer token |
+| `POST` | `/api/logout` | Revoke current auth token |
+| `POST` | `/api/list-databases` | List databases for supported servers |
+| `POST` | `/api/create-database` | Create supported SQL databases |
+| `POST` | `/api/connect` | Connect to a source and issue `X-DB-Session` token |
+| `POST` | `/api/connect-file` | Upload CSV/Excel and create a temporary queryable snapshot |
+| `GET` | `/api/connection-status` | Check active source connection |
+| `GET` | `/api/database-tables` | List tables, collections, or metadata |
+| `GET` | `/api/table-schema/{table_name}` | Inspect table or collection schema |
+| `POST` | `/api/chat` | Generate and execute a read-only SQL answer |
+| `GET/POST/PUT/DELETE` | `/api/chat-sessions` | Manage chat sessions |
+| `GET/POST/DELETE` | `/api/favorites` | Manage saved queries |
+| `POST` | `/api/export` | Export result data as CSV or JSON |
+| `GET/POST/PUT/DELETE` | `/api/custom-dashboards` | Persist custom dashboards |
 
-| Field | Example |
-|-------|---------|
-| Host | `localhost` |
-| Port | `3306` |
-| Username | `root` |
-| Password | `your_password` |
-| Database | `my_database` |
+## Security Notes
 
-### Sample Database Setup (Optional)
+- Do not commit `.env` files or real credentials.
+- Rotate any API keys, app passwords, or database credentials that have ever been shared or committed.
+- Database connections are stored as per-user session records and used through the `X-DB-Session` header.
+- SQL generation is validated against read-only prefixes such as `SELECT`, `WITH`, `SHOW`, `DESCRIBE`, `EXPLAIN`, and `PRAGMA`.
+- Write SQL confirmation is currently disabled on the backend.
 
-```sql
-CREATE DATABASE sample_store;
-USE sample_store;
+## Project Structure
 
-CREATE TABLE users (
-    id INT PRIMARY KEY AUTO_INCREMENT,
-    name VARCHAR(100),
-    email VARCHAR(100),
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE TABLE orders (
-    id INT PRIMARY KEY AUTO_INCREMENT,
-    user_id INT,
-    amount DECIMAL(10, 2),
-    status VARCHAR(50),
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (user_id) REFERENCES users(id)
-);
-
-INSERT INTO users (name, email) VALUES
-  ('Alice', 'alice@example.com'),
-  ('Bob', 'bob@example.com');
-
-INSERT INTO orders (user_id, amount, status) VALUES
-  (1, 99.99, 'completed'),
-  (1, 49.50, 'pending'),
-  (2, 150.00, 'completed');
+```text
+.
+|-- backend/
+|   |-- backend.py              # FastAPI app and API routes
+|   |-- extended_models.py      # SQLAlchemy models for favorites/settings/history
+|   |-- migration.py            # Database migration helper
+|   |-- requirements.txt        # Backend dependencies
+|   `-- sql_system_prompt.py    # LLM system prompt
+|-- Query-frontend/
+|   |-- src/
+|   |   |-- components/         # UI, auth, chat, dashboard components
+|   |   |-- contexts/           # Auth, theme, database session state
+|   |   |-- hooks/              # Query/chat helpers
+|   |   |-- lib/                # Data source definitions and utilities
+|   |   |-- pages/              # Landing, auth, dashboard routes
+|   |   `-- services/           # API clients
+|   |-- package.json
+|   `-- vite.config.ts
+|-- README.md
+`-- Query_Genie_Presentation.md
 ```
 
----
-
-## 💡 Usage Examples
-
-Once connected to your database, try asking:
-
-**Simple Queries**
-```
-"Show me all users"
-"How many orders are there?"
-"What are the table names?"
-```
-
-**Aggregations**
-```
-"What is the average order amount?"
-"Show me total sales by user"
-"Count orders by status"
-```
-
-**Joins & Relationships**
-```
-"Show me users with their orders"
-"Find users who have never placed an order"
-"List top 5 users by order count"
-```
-
-**Filtering**
-```
-"Show orders from the last 30 days"
-"Find users whose email contains 'gmail'"
-"List orders greater than $100"
-```
-
-**Data Modifications** *(with safety confirmation)*
-```
-"Delete orders older than 1 year"
-"Update user status to active"
-"Create a new table for products"
-```
-
----
-
-## 📡 API Reference
-
-### Authentication
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `POST` | `/api/send-otp` | Send OTP to email (5/min limit) |
-| `POST` | `/api/signup` | Register with OTP verification |
-| `POST` | `/api/login` | Login with email & password (10/min limit) |
-| `GET` | `/api/profile/{user_id}` | Get user profile |
-
-### Database
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `POST` | `/api/connect` | Connect to MySQL database |
-| `POST` | `/api/disconnect` | Disconnect current database |
-| `POST` | `/api/list-databases` | List all databases on server |
-| `POST` | `/api/create-database` | Create a new database |
-| `GET` | `/api/database-tables` | Get all tables with metadata |
-| `GET` | `/api/table-schema/{table}` | Get column details for a table |
-| `GET` | `/api/search/tables?query=` | Search tables and columns |
-
-### Chat & Queries
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `POST` | `/api/chat` | Send natural language query (60/min limit) |
-| `POST` | `/api/confirm-sql` | Confirm/reject destructive SQL |
-| `POST` | `/api/export` | Export query results |
-
-### Sessions & History
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `GET` | `/api/sessions/{user_id}` | Get all chat sessions |
-| `POST` | `/api/sessions` | Create a new session |
-| `PUT` | `/api/sessions/{session_id}` | Update session messages |
-| `DELETE` | `/api/sessions/{session_id}` | Delete a session |
-| `GET` | `/api/history/{user_id}` | Get query execution history |
-| `GET` | `/api/history/{user_id}/stats` | Get query statistics |
-
-### Dashboards
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `GET` | `/api/dashboards/{user_id}` | Get all dashboards |
-| `POST` | `/api/dashboards` | Create a dashboard |
-| `PUT` | `/api/dashboards/{dashboard_id}` | Update a dashboard |
-| `DELETE` | `/api/dashboards/{user_id}/{dashboard_id}` | Delete a dashboard |
-
-### User Preferences
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `GET` | `/api/favorites/{user_id}` | Get favorite queries |
-| `POST` | `/api/favorites` | Save a favorite query |
-| `DELETE` | `/api/favorites/{id}` | Remove a favorite |
-| `GET` | `/api/settings/{user_id}` | Get user settings |
-| `PUT` | `/api/settings/{user_id}` | Update user settings |
-| `GET` | `/api/tip-of-the-day` | Get a random SQL tip |
-
----
-
-## 📁 Project Structure
-
-```
-Query-Genie/
-├── backend/
-│   ├── backend.py              # Main FastAPI application (all endpoints)
-│   ├── extended_models.py      # Additional SQLAlchemy models
-│   ├── sql_system_prompt.py    # System prompt for SQL generation
-│   ├── migration.py            # Database migration utilities
-│   ├── requirements.txt        # Python dependencies
-│   ├── .env                    # Environment variables (not committed)
-│   ├── users.db                # SQLite database (auto-generated)
-│   └── tests/
-│       ├── conftest.py         # Pytest fixtures & configuration
-│       ├── test_unit.py        # Unit tests
-│       └── test_integration.py # Integration tests
-│
-├── Query-frontend/
-│   ├── src/
-│   │   ├── App.tsx             # Root component with routing
-│   │   ├── main.tsx            # Application entry point
-│   │   ├── pages/
-│   │   │   ├── Index.tsx       # Landing page
-│   │   │   ├── AuthPage.tsx    # Login & signup page
-│   │   │   ├── DashboardPage.tsx    # Main chat dashboard
-│   │   │   └── Customdashboard.tsx  # Custom chart dashboard
-│   │   ├── components/
-│   │   │   ├── auth/           # Authentication components
-│   │   │   ├── chat/           # Chat interface components
-│   │   │   ├── dashboard/      # Dashboard components
-│   │   │   └── ui/             # shadcn/ui components
-│   │   ├── contexts/           # React context providers
-│   │   ├── services/           # API service layer
-│   │   ├── hooks/              # Custom React hooks
-│   │   └── lib/                # Utility functions
-│   ├── package.json
-│   ├── tailwind.config.ts
-│   ├── vite.config.ts
-│   └── tsconfig.json
-│
-├── requirements.txt            # Root-level Python dependencies
-├── LICENSE                     # MIT License
-└── README.md                   # This file
-```
-
----
-
-## 🧪 Testing
-
-The project includes both **unit** and **integration** tests.
+## Useful Commands
 
 ```bash
-# Navigate to the backend directory
+# Backend
 cd backend
+uvicorn backend:app --reload --port 8000
 
-# Run all tests
-pytest tests/ -v
-
-# Run only unit tests
-pytest tests/test_unit.py -v
-
-# Run only integration tests
-pytest tests/test_integration.py -v
-
-# Run with coverage report
-pytest tests/ -v --cov=. --cov-report=term-missing
+# Frontend
+cd Query-frontend
+npm run dev
+npm run build
+npm run lint
 ```
 
----
+## Troubleshooting
 
-## 🛡️ Security Features
+If the frontend cannot reach the backend, confirm `VITE_API_URL` and make sure the FastAPI server is running on the same URL.
 
-| Feature | Implementation |
-|---------|---------------|
-| **Password Hashing** | Bcrypt via Passlib with automatic salt |
-| **OTP Verification** | 6-digit codes with 5-minute expiry, max 5 attempts |
-| **Rate Limiting** | SlowAPI middleware — 5 OTP/min, 10 login/min, 60 chat/min |
-| **SQL Safety Validation** | Blocks multi-statement, comment injection, DROP/TRUNCATE |
-| **Destructive Op Warnings** | User confirmation required for DELETE, UPDATE, ALTER |
-| **Connection Pooling** | SQLAlchemy with pre-ping, recycle, and overflow limits |
-| **Input Validation** | Pydantic models + email-validator for all requests |
-| **CORS Configuration** | Configurable allowed origins |
-| **Thread-Safe OTP** | Thread-locked storage with automatic cleanup |
+If signup OTP fails, confirm `EMAIL_HOST_USER` and `EMAIL_HOST_PASSWORD`. Gmail requires an app password, not a normal account password.
 
----
+If chat generation fails, confirm that either Ollama is reachable with the configured model or `GROQ_API_KEY` is set.
 
-## 🔮 Roadmap
-
-- [ ] PostgreSQL & SQLite support for user databases
-- [ ] Excel / CSV file upload and querying
-- [ ] Multi-user collaboration & shared sessions
-- [ ] Query templates library
-- [ ] Voice-to-SQL input
-- [ ] Query result visualization auto-suggestions
-- [ ] Docker Compose one-command setup
-
----
-
-## 🤝 Contributing
-
-Contributions are welcome! Please follow these steps:
-
-1. **Fork** this repository
-2. **Create** a feature branch: `git checkout -b feature/amazing-feature`
-3. **Commit** your changes: `git commit -m "Add amazing feature"`
-4. **Push** to the branch: `git push origin feature/amazing-feature`
-5. **Open** a Pull Request
-
----
-
-## 📝 License
-
-This project is licensed under the **MIT License** — see the [LICENSE](LICENSE) file for details.
-
----
-
-## 👤 Author
-
-**Vaibhav Burad**
-
-[![GitHub](https://img.shields.io/badge/GitHub-vaibhavburad15-181717?logo=github)](https://github.com/vaibhavburad15)
-[![LinkedIn](https://img.shields.io/badge/LinkedIn-Vaibhav_Burad-0A66C2?logo=linkedin)](https://www.linkedin.com/in/vaibhav-burad-278414243/)
-
----
-
-<p align="center">
-  Made with ❤️ by Vaibhav Burad
-</p>
+If a database connection fails, confirm the source driver is installed, the host/port is reachable, and the credentials have permission to inspect schemas and run read-only queries.
