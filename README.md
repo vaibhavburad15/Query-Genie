@@ -146,7 +146,7 @@ Start Vite:
 npm run dev
 ```
 
-The Vite dev server is configured for `http://localhost:8080`.
+The Vite dev server is configured for `http://localhost:8082`.
 
 ## Main Routes
 
