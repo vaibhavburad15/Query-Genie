@@ -342,7 +342,23 @@ app = FastAPI()
 limiter = Limiter(key_func=get_remote_address)
 app.state.limiter = limiter
 
-ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "http://localhost:5173,http://localhost:3000,http://localhost:8081").split(",")
+DEFAULT_ALLOWED_ORIGINS = [
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    "http://localhost:8081",
+    "http://127.0.0.1:8081",
+    "http://localhost:8082",
+    "http://127.0.0.1:8082",
+]
+
+allowed_origins_env = os.getenv("ALLOWED_ORIGINS")
+ALLOWED_ORIGINS = (
+    [origin.strip() for origin in allowed_origins_env.split(",") if origin.strip()]
+    if allowed_origins_env
+    else DEFAULT_ALLOWED_ORIGINS
+)
 
 app.add_middleware(
     CORSMiddleware,
@@ -562,7 +578,94 @@ def get_db():
 
 
 AUTH_SESSION_TTL_SECONDS = int(os.getenv("AUTH_SESSION_TTL", "604800"))
-READ_ONLY_SQL_PREFIXES = ("SELECT", "WITH", "SHOW", "DESCRIBE", "DESC", "EXPLAIN", "PRAGMA")
+# SHOW, DESCRIBE, DESC removed — system prompt instructs LLM to use
+# INFORMATION_SCHEMA instead; allowing them here contradicts that rule
+# and causes the LLM to emit shortcuts instead of proper SELECT queries.
+READ_ONLY_SQL_PREFIXES = ("SELECT", "WITH", "EXPLAIN", "PRAGMA")
+
+# Per-dialect injection rules — added to every LLM prompt so the model
+# always knows exactly which SQL syntax to produce.
+DIALECT_RULES = {
+    "mysql": (
+        "You are generating MySQL 8.x SQL.\n"
+        "Rules:\n"
+        "- Use LIMIT N (not FETCH FIRST)\n"
+        "- Use INFORMATION_SCHEMA.TABLES / INFORMATION_SCHEMA.COLUMNS for metadata\n"
+        "- Never use SHOW TABLES or DESCRIBE\n"
+        "- Use DATE(), CURDATE(), NOW(), DATE_SUB() for dates\n"
+        "- Use CONCAT() for string concatenation\n"
+        "- Always include GROUP BY for every non-aggregate SELECT column"
+    ),
+    "mariadb": (
+        "You are generating MariaDB 10.x SQL.\n"
+        "Rules:\n"
+        "- Use LIMIT N (not FETCH FIRST)\n"
+        "- Use INFORMATION_SCHEMA for metadata\n"
+        "- Never use SHOW TABLES or DESCRIBE\n"
+        "- Use DATE(), CURDATE(), NOW() for dates\n"
+        "- Always include GROUP BY for every non-aggregate SELECT column"
+    ),
+    "postgresql": (
+        "You are generating PostgreSQL 15+ SQL.\n"
+        "Rules:\n"
+        "- Use LIMIT N / OFFSET for pagination\n"
+        "- Use information_schema.tables / information_schema.columns for metadata\n"
+        "- Use ILIKE for case-insensitive LIKE\n"
+        "- Use NOW() - INTERVAL 'N days' for date arithmetic\n"
+        "- Use col::TEXT for casting\n"
+        "- Use || for string concatenation\n"
+        "- Always include GROUP BY for every non-aggregate SELECT column"
+    ),
+    "oracle": (
+        "You are generating Oracle 12c+ SQL.\n"
+        "Rules:\n"
+        "- Use FETCH FIRST N ROWS ONLY (not LIMIT)\n"
+        "- Use user_tables / user_tab_columns for metadata\n"
+        "- Use SYSDATE for current date, TO_DATE() for literals\n"
+        "- Use || for string concatenation\n"
+        "- Use NVL() for null handling\n"
+        "- Use DUAL for scalar expressions: SELECT ... FROM dual\n"
+        "- Always include GROUP BY for every non-aggregate SELECT column"
+    ),
+    "mssql": (
+        "You are generating Microsoft SQL Server T-SQL.\n"
+        "Rules:\n"
+        "- Use TOP(N) or FETCH FIRST N ROWS ONLY for row limits\n"
+        "- Use INFORMATION_SCHEMA for metadata\n"
+        "- Use GETDATE() for current datetime, DATEADD() for arithmetic\n"
+        "- Use ISNULL() or COALESCE() for null handling\n"
+        "- Use N'value' prefix for Unicode string literals\n"
+        "- Always include GROUP BY for every non-aggregate SELECT column"
+    ),
+    "db2": (
+        "You are generating IBM Db2 SQL.\n"
+        "Rules:\n"
+        "- Use FETCH FIRST N ROWS ONLY (not LIMIT)\n"
+        "- Use SYSCAT.TABLES / SYSCAT.COLUMNS for metadata\n"
+        "- Use CURRENT DATE / CURRENT TIMESTAMP (no parentheses)\n"
+        "- Use || for string concatenation\n"
+        "- Always include GROUP BY for every non-aggregate SELECT column"
+    ),
+    "sqlite": (
+        "You are generating SQLite 3 SQL.\n"
+        "Rules:\n"
+        "- Use LIMIT N / OFFSET for pagination\n"
+        "- Use sqlite_master WHERE type='table' for table metadata\n"
+        "- Use PRAGMA table_info(table_name) for column metadata\n"
+        "- Use DATE('now', '-N days') for date arithmetic\n"
+        "- Use strftime('%Y', col) to extract date parts\n"
+        "- Always include GROUP BY for every non-aggregate SELECT column"
+    ),
+}
+
+DEFAULT_DIALECT_RULES = (
+    "You are generating standard SQL.\n"
+    "Rules:\n"
+    "- Use LIMIT N for row limits\n"
+    "- Use INFORMATION_SCHEMA for metadata\n"
+    "- Always include GROUP BY for every non-aggregate SELECT column"
+)
+
 SQL_SOURCE_TYPES = {"mysql", "postgresql", "mariadb", "oracle", "sqlserver", "db2", "sqlite", "csv", "excel"}
 FILE_SOURCE_TYPES = {"csv", "excel"}
 METADATA_ONLY_SOURCE_TYPES = {"mongodb", "redis"}
@@ -1198,9 +1301,11 @@ def generate_otp():
 
 def send_otp_email(recipient_email: str, otp: str):
     if not EMAIL_HOST_USER or not EMAIL_HOST_PASSWORD:
-        # In dev mode without email creds, do NOT log the OTP to stdout
-        print(f"[DEV] Email credentials missing – OTP not sent to {recipient_email}")
-        return
+        logger.warning("Email credentials missing; OTP was not sent to %s", recipient_email)
+        raise HTTPException(
+            status_code=503,
+            detail="Email OTP is not configured. Set EMAIL_HOST_USER and EMAIL_HOST_PASSWORD.",
+        )
 
     message = MIMEMultipart("alternative")
     message["Subject"] = "Your Verification Code"
@@ -1225,9 +1330,15 @@ def send_otp_email(recipient_email: str, otp: str):
         with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
             server.login(EMAIL_HOST_USER, EMAIL_HOST_PASSWORD)
             server.sendmail(EMAIL_HOST_USER, recipient_email, message.as_string())
+    except smtplib.SMTPAuthenticationError as e:
+        logger.warning("SMTP authentication failed for %s: %s", EMAIL_HOST_USER, e)
+        raise HTTPException(
+            status_code=503,
+            detail="SMTP authentication failed. For Gmail, use a Google app password for EMAIL_HOST_PASSWORD.",
+        )
     except Exception as e:
-        print(f"Failed to send email: {e}")
-        raise HTTPException(status_code=500, detail="Failed to send OTP email.")
+        logger.exception("Failed to send OTP email to %s: %s", recipient_email, e)
+        raise HTTPException(status_code=502, detail="Failed to send OTP email.")
 
 
 DANGEROUS_KEYWORDS = [
@@ -1277,14 +1388,23 @@ def sql_to_table_preview(sql: str):
 
 
 def validate_sql_safety(sql: str) -> Tuple[bool, str]:
-    sql_upper = sql.upper().strip()
-    if sql_upper.startswith(("DROP", "TRUNCATE")):
+    """
+    Fix for BUG 5: comments in LLM output used to cause an immediate hard
+    security error with no retry. Now comments are stripped first (using
+    the existing strip_sql_comments helper) so that an otherwise valid
+    query is not rejected just because the LLM added a comment.
+    """
+    # Strip comments before validating — LLM sometimes adds them
+    clean_sql = strip_sql_comments(sql).strip()
+
+    clean_upper = clean_sql.upper().strip()
+    if clean_upper.startswith(("DROP", "TRUNCATE")):
         return False, "DROP and TRUNCATE operations are not allowed"
-    statements = sql.split(";")
+
+    statements = clean_sql.split(";")
     if len([s for s in statements if s.strip()]) > 1:
         return False, "Multiple SQL statements are not allowed"
-    if "--" in sql or "/*" in sql or "*/" in sql or "#" in sql:
-        return False, "SQL comments are not allowed for security"
+
     return True, ""
 
 
@@ -1449,13 +1569,38 @@ def build_sql_prompt(
     failed_sql: Optional[str] = None,
     execution_error: Optional[str] = None,
 ) -> str:
+    """
+    Build the full LLM prompt.
+
+    Fixes applied:
+    - BUG 1: removed the broken .replace("{dialect}", ...) no-op.
+    - BUG 3: dialect name and dialect-specific syntax rules are now
+      explicitly injected into the prompt body so the LLM always
+      knows which SQL dialect to produce.
+    """
     history_context = format_chat_history(chat_history or [])
-    dialect_name = getattr(db._engine.dialect, "name", "SQL").replace("_", " ").title()
-    system_prompt = SQL_SYSTEM_PROMPT.replace("{dialect}", dialect_name).strip()
+    raw_dialect = getattr(db._engine.dialect, "name", "sql").lower()
+
+    dialect_key_map = {
+        "mysql": "mysql",
+        "mariadb": "mariadb",
+        "postgresql": "postgresql",
+        "oracle": "oracle",
+        "mssql": "mssql",
+        "sqlite": "sqlite",
+        "ibm_db_sa": "db2",
+    }
+    dialect_key = dialect_key_map.get(raw_dialect, raw_dialect)
+    dialect_rules = DIALECT_RULES.get(dialect_key, DEFAULT_DIALECT_RULES)
+    dialect_display = raw_dialect.upper()
+
+    system_prompt = SQL_SYSTEM_PROMPT.strip()
     schema_context = build_llm_schema_context(db)
 
     prompt_parts = [
         system_prompt,
+        f"CURRENT TARGET DATABASE ENGINE: {dialect_display}",
+        dialect_rules,
         "Database Schema:",
         schema_context,
         "Conversation History:",
@@ -1466,11 +1611,12 @@ def build_sql_prompt(
 
     if failed_sql and execution_error:
         prompt_parts.extend([
-            "Previous SQL Attempt:",
+            "Previous SQL Attempt (FAILED — do NOT repeat this):",
             failed_sql.strip(),
             "Execution Error:",
             execution_error.strip(),
             "Correction Rules:",
+            f"- You must generate valid {dialect_display} SQL only.",
             "- Fix the SQL using only the exact tables and columns listed in the schema.",
             "- Re-check every JOIN key and every filtered column before answering.",
             "- If descriptive values are needed from a lookup table, join through the foreign keys shown in the schema.",
@@ -1478,6 +1624,7 @@ def build_sql_prompt(
     else:
         prompt_parts.extend([
             "Generation Rules:",
+            f"- Generate valid {dialect_display} SQL only.",
             "- Use the exact table names and column names from the schema.",
             "- Re-check every JOIN key and every filtered column before answering.",
             "- If descriptive values are needed from a lookup table, join through the foreign keys shown in the schema.",
@@ -1490,6 +1637,8 @@ def build_sql_prompt(
         "- No explanation.",
         "- No comments.",
         "- No trailing semicolon.",
+        f"- The query MUST be valid {dialect_display} syntax.",
+        "- The query MUST start with SELECT or WITH.",
     ])
 
     return "\n\n".join(prompt_parts)
@@ -1828,10 +1977,18 @@ def get_sql_chain(db, question: str, chat_history: Optional[list] = None) -> str
 
 
 def get_response(question: str, db, db_name: str, chat_history: Optional[list] = None):
-    """Generate SQL via LLM, execute it, return structured response string."""
+    """
+    Generate SQL via LLM, execute it, return structured response string.
+
+    Fix for BUG 2: when Ollama returns prose or invalid SQL and we fall
+    back to Groq, the prompt is now rebuilt with the failed Ollama output
+    attached as a "failed attempt". Previously the identical prompt was
+    sent to Groq, which could produce the same broken output again.
+    """
     sql_query = "N/A"
     prompt = get_sql_chain(db, question, chat_history or [])
     allow_ollama = True
+    bad_ollama_text: Optional[str] = None
 
     try:
         for generation_attempt in range(2):
@@ -1839,13 +1996,33 @@ def get_response(question: str, db, db_name: str, chat_history: Optional[list] =
             try:
                 response_text = generate_llm_response(prompt, allow_ollama=allow_ollama)
                 sql_query = extract_sql_query(response_text)
+
             except ValueError as exc:
                 if allow_ollama and use_ollama():
-                    logger.info("Ollama response was not usable as SQL. Using Groq fallback.")
-                    if response_text:
-                        logger.debug("Unusable Ollama response preview: %s", truncate_for_log(response_text))
+                    logger.info(
+                        "Ollama response was not usable as SQL (%s). Rebuilding prompt for Groq fallback.",
+                        exc,
+                    )
+                    bad_ollama_text = response_text
+                    if bad_ollama_text:
+                        logger.debug(
+                            "Unusable Ollama response preview: %s",
+                            truncate_for_log(bad_ollama_text),
+                        )
                     allow_ollama = False
-                    response_text = generate_llm_response(prompt, allow_ollama=False)
+                    # Rebuild prompt with the bad Ollama output so Groq
+                    # receives different input and knows to correct it.
+                    groq_prompt = build_sql_prompt(
+                        db,
+                        question,
+                        chat_history or [],
+                        failed_sql=bad_ollama_text,
+                        execution_error=(
+                            "The previous attempt returned natural language or invalid SQL "
+                            "instead of a valid query. Generate a correct SQL query now."
+                        ),
+                    )
+                    response_text = generate_llm_response(groq_prompt, allow_ollama=False)
                     sql_query = extract_sql_query(response_text)
                 else:
                     raise
@@ -1854,14 +2031,22 @@ def get_response(question: str, db, db_name: str, chat_history: Optional[list] =
             if not is_safe:
                 if allow_ollama and use_ollama():
                     logger.warning(
-                        "Ollama SQL failed safety validation. Falling back to Groq. SQL: %s | Reason: %s",
-                        sql_query,
+                        "Ollama SQL failed safety validation (%s). Falling back to Groq. SQL: %s",
                         error_msg,
+                        sql_query,
                     )
                     allow_ollama = False
-                    response_text = generate_llm_response(prompt, allow_ollama=False)
+                    groq_prompt = build_sql_prompt(
+                        db,
+                        question,
+                        chat_history or [],
+                        failed_sql=sql_query,
+                        execution_error=f"Safety violation: {error_msg}",
+                    )
+                    response_text = generate_llm_response(groq_prompt, allow_ollama=False)
                     sql_query = extract_sql_query(response_text)
                     is_safe, error_msg = validate_sql_safety(sql_query)
+
                 if not is_safe:
                     return json.dumps({
                         "type": "error",
@@ -1876,7 +2061,17 @@ def get_response(question: str, db, db_name: str, chat_history: Optional[list] =
                         sql_query,
                     )
                     allow_ollama = False
-                    response_text = generate_llm_response(prompt, allow_ollama=False)
+                    groq_prompt = build_sql_prompt(
+                        db,
+                        question,
+                        chat_history or [],
+                        failed_sql=sql_query,
+                        execution_error=(
+                            "The previous attempt generated a write/DDL statement. "
+                            "Generate a read-only SELECT or WITH query."
+                        ),
+                    )
+                    response_text = generate_llm_response(groq_prompt, allow_ollama=False)
                     sql_query = extract_sql_query(response_text)
                     is_safe, error_msg = validate_sql_safety(sql_query)
                     if not is_safe:
@@ -1885,23 +2080,20 @@ def get_response(question: str, db, db_name: str, chat_history: Optional[list] =
                             "message": f"❌ Security Check Failed: {error_msg}",
                             "sql": sql_query,
                         })
-                    if is_read_only_sql(sql_query):
-                        pass
-                    else:
-                        return json.dumps({
-                            "type": "error",
-                            "sql": sql_query,
-                            "message": "Write operations are temporarily disabled for security reasons. Only read-only queries are allowed.",
-                        })
+
                 if not is_read_only_sql(sql_query):
                     return json.dumps({
                         "type": "error",
                         "sql": sql_query,
-                        "message": "Write operations are temporarily disabled for security reasons. Only read-only queries are allowed.",
+                        "message": (
+                            "Write operations are temporarily disabled for security reasons. "
+                            "Only read-only queries are allowed."
+                        ),
                     })
 
             try:
                 return execute_read_only_sql(sql_query, db, db_name)
+
             except Exception as select_error:
                 error_message = str(select_error)
                 if generation_attempt == 0 and should_retry_sql_generation(error_message):
@@ -1967,9 +2159,9 @@ async def send_otp_for_signup(request: Request, otp_request: OtpRequest, db: Ses
         raise HTTPException(status_code=400, detail=f"Invalid email address: {str(e)}")
 
     otp = generate_otp()
-    otp_manager.store(otp_request.email, otp, db)
     # OTP is NOT logged to stdout
     send_otp_email(otp_request.email, otp)
+    otp_manager.store(otp_request.email, otp, db)
     return {"success": True, "message": "OTP has been sent to your email."}
 
 
