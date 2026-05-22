@@ -1,4 +1,5 @@
 import { useNavigate } from 'react-router-dom';
+import { useState } from 'react';
 import type { ComponentType } from 'react';
 import {
   ArrowRight,
@@ -26,6 +27,7 @@ import {
   Sparkles,
   Star,
   Terminal,
+  UserRound,
   XCircle,
   Zap,
 } from 'lucide-react';
@@ -126,6 +128,26 @@ const sourceCards = [
   },
 ];
 
+const creatorProfile = {
+  sectionLabel: 'Team',
+  headline: 'Meet the creator behind Query Genie',
+  name: 'Your Name',
+  role: 'Founder / Developer',
+  photo: '/your-photo.jpg',
+  aboutTitle: 'About me',
+  aboutHeadline: 'Tell visitors who you are and why you built this product',
+  aboutText:
+    'Use this section to introduce yourself, your background, and what inspired you to build Query Genie. This is the perfect place to make the page feel more personal and trustworthy.',
+  aboutText2:
+    'You can talk about your experience with analytics, AI, product development, and the kind of value you create for users or clients. Replace this copy with your real story and achievements.',
+  highlights: [
+    'Share your mission and the problem you solve',
+    'Highlight your product, design, and engineering strengths',
+    'Add trust signals like experience, projects, or clients',
+    'Invite people to connect, collaborate, or get in touch',
+  ],
+};
+
 const dbColor = new Map(databaseSources.map((source) => [source.name, source.color]));
 
 const getAccentClasses = (accent: string) => {
@@ -156,6 +178,7 @@ const Index = () => {
   const sourceMarquee = [...databaseSources, ...databaseSources];
 
   const goToAuth = () => navigate('/auth');
+  const [profileImageError, setProfileImageError] = useState(false);
 
   return (
     <div className="landing-page min-h-screen overflow-x-hidden bg-[var(--landing-bg)] text-[var(--landing-ink)]">
@@ -167,9 +190,7 @@ const Index = () => {
             className="flex items-center gap-2.5"
             aria-label="Query Genie home"
           >
-            <span className="grid h-9 w-9 place-items-center rounded-lg bg-gradient-to-br from-violet-500 to-fuchsia-500 shadow-[0_0_35px_-12px_rgba(124,92,255,0.9)]">
-              <img src={logo} alt="" className="h-7 w-7 object-contain" />
-            </span>
+            <img src={logo} alt="" className="h-9 w-9 object-contain" />
             <span className="text-[15px] font-bold tracking-tight">Query Genie</span>
           </button>
 
@@ -182,6 +203,9 @@ const Index = () => {
             </a>
             <a href="#features" className="transition hover:text-[var(--landing-ink)]">
               Features
+            </a>
+            <a href="#team" className="transition hover:text-[var(--landing-ink)]">
+              Team
             </a>
           </nav>
 
@@ -553,6 +577,89 @@ const Index = () => {
           </div>
         </section>
 
+        <section id="team" className="landing-section relative bg-[var(--landing-band)]">
+          <div className="landing-radial absolute inset-0 opacity-50" />
+          <div className="relative mx-auto max-w-7xl px-6 lg:px-10">
+            <div className="mx-auto mb-14 max-w-2xl text-center">
+              <div className="landing-chip mx-auto mb-4">
+                <Sparkles className="h-3.5 w-3.5" />
+                {creatorProfile.sectionLabel}
+              </div>
+              <h2 className="landing-grad-text text-4xl font-extrabold tracking-tight sm:text-5xl">
+                {creatorProfile.headline}
+              </h2>
+            </div>
+
+            <div className="grid items-center gap-8 lg:grid-cols-12">
+              <div className="lg:col-span-5">
+                <div className="landing-card overflow-hidden p-3 sm:p-4">
+                  <div className="relative aspect-[4/5] overflow-hidden rounded-[24px] border border-[var(--landing-line)] bg-gradient-to-br from-violet-500/15 via-[var(--landing-card)] to-cyan-500/10">
+                    {!profileImageError ? (
+                      <img
+                        src={creatorProfile.photo}
+                        alt={creatorProfile.name}
+                        className="h-full w-full object-cover"
+                        onError={() => setProfileImageError(true)}
+                      />
+                    ) : (
+                      <div className="flex h-full flex-col items-center justify-center gap-4 px-6 text-center">
+                        <div className="grid h-24 w-24 place-items-center rounded-full bg-gradient-to-br from-violet-500 to-cyan-500 shadow-[0_0_45px_-18px_rgba(124,92,255,0.9)]">
+                          <UserRound className="h-10 w-10 text-white" />
+                        </div>
+                        <div>
+                          <p className="text-base font-semibold text-[var(--landing-ink)]">Add your photo</p>
+                          <p className="mt-1 text-sm text-[var(--landing-muted)]">
+                            Replace
+                            {' '}
+                            <span className="font-mono">creatorProfile.photo</span>
+                            {' '}
+                            with your image path.
+                          </p>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="mt-4 rounded-2xl border border-[var(--landing-line)] bg-[var(--landing-card)] px-5 py-4">
+                    <p className="text-xl font-bold text-[var(--landing-ink)]">{creatorProfile.name}</p>
+                    <p className="mt-1 text-sm text-[var(--landing-muted)]">{creatorProfile.role}</p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="lg:col-span-7">
+                <div className="landing-card p-7 sm:p-9">
+                  <div className="landing-chip mb-5">
+                    <Star className="h-3.5 w-3.5" />
+                    {creatorProfile.aboutTitle}
+                  </div>
+                  <h3 className="text-3xl font-bold tracking-tight text-[var(--landing-ink)] sm:text-4xl">
+                    {creatorProfile.aboutHeadline}
+                  </h3>
+                  <p className="mt-5 text-base leading-7 text-[var(--landing-soft)]">
+                    {creatorProfile.aboutText}
+                  </p>
+                  <p className="mt-4 text-base leading-7 text-[var(--landing-muted)]">
+                    {creatorProfile.aboutText2}
+                  </p>
+
+                  <div className="mt-6 grid gap-3 sm:grid-cols-2">
+                    {creatorProfile.highlights.map((item) => (
+                      <div
+                        key={item}
+                        className="flex items-start gap-3 rounded-2xl border border-[var(--landing-line)] bg-[var(--landing-card)] px-4 py-3"
+                      >
+                        <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-400" />
+                        <span className="text-sm text-[var(--landing-soft)]">{item}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
         <section className="landing-section relative overflow-hidden">
           <div className="landing-radial absolute inset-0" />
           <div className="relative mx-auto max-w-4xl px-6 text-center lg:px-10">
@@ -598,9 +705,7 @@ const Index = () => {
         <div className="mx-auto grid max-w-7xl gap-10 px-6 py-12 md:grid-cols-4 lg:px-10">
           <div>
             <div className="mb-3 flex items-center gap-2.5">
-              <span className="grid h-8 w-8 place-items-center rounded-lg bg-gradient-to-br from-violet-500 to-fuchsia-500 shadow-[0_0_35px_-12px_rgba(124,92,255,0.9)]">
-                <img src={logo} alt="" className="h-6 w-6 object-contain" />
-              </span>
+              <img src={logo} alt="" className="h-8 w-8 object-contain" />
               <span className="font-bold tracking-tight">Query Genie</span>
             </div>
             <p className="text-sm leading-relaxed text-[var(--landing-muted)]">
@@ -614,6 +719,7 @@ const Index = () => {
               ['Workflow', '#workflow'],
               ['Sources', '#sources'],
               ['Features', '#features'],
+              ['Team', '#team'],
               ['Get started', '/auth'],
             ]}
           />
