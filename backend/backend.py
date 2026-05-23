@@ -18,6 +18,7 @@ from email.mime.multipart import MIMEMultipart
 from passlib.context import CryptContext
 from langchain_community.utilities import SQLDatabase
 from langchain_groq import ChatGroq
+from langchain_core.messages import SystemMessage, HumanMessage
 import requests
 from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime, ForeignKey, text, or_, inspect as sqlalchemy_inspect
 from sqlalchemy.orm import declarative_base
@@ -65,6 +66,16 @@ if not groq_api_key:
     GROQ_API_KEY = ""
 else:
     GROQ_API_KEY = cast(str, groq_api_key)
+
+# ── Groq token budgets (free tier = 12,000 TPM) ──────────────────────────────
+GROQ_MAX_SCHEMA_CHARS  = 6000   # hard cap on schema text sent to Groq (~1500 tokens)
+GROQ_MAX_HISTORY_TURNS = 6      # keep only the last N turns of chat history
+GROQ_MAX_TOKENS_OUT    = 512    # SQL output is short; 512 is more than enough
+
+# ── Per-dialect system message cache ─────────────────────────────────────────
+# Built once per dialect on first Groq call, reused forever after.
+_groq_sys_cache: Dict[str, "SystemMessage"] = {}
+_groq_sys_lock  = threading.Lock()
 
 EMAIL_HOST_USER = os.getenv("EMAIL_HOST_USER")
 EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD")
@@ -335,6 +346,76 @@ class QueryCache:
 query_cache = QueryCache(ttl_seconds=300, max_entries=200)
 
 # ─────────────────────────────────────────────
+# PENDING ACTION STORE
+# Holds write/DDL SQL waiting for user confirmation.
+# Keyed by a random pending_id, TTL = 10 minutes.
+# ─────────────────────────────────────────────
+class PendingActionStore:
+    """
+    In-process store for write SQL awaiting user confirmation.
+    Each entry holds the SQL, a human-readable description,
+    the db_uri and db_name needed to execute it, and an expiry time.
+    """
+
+    def __init__(self, ttl_seconds: int = 600):
+        self._store: Dict[str, Dict[str, Any]] = {}
+        self._lock = threading.Lock()
+        self._ttl = ttl_seconds
+
+    def _purge_expired(self) -> None:
+        """Remove expired entries — called on every read/write."""
+        now = time.time()
+        expired = [k for k, v in self._store.items() if v["expires_at"] < now]
+        for k in expired:
+            del self._store[k]
+
+    def create(
+        self,
+        sql: str,
+        description: str,
+        operation_type: str,
+        db_uri: str,
+        db_name: str,
+        user_id: int,
+    ) -> str:
+        """Store a pending write action and return its unique pending_id."""
+        pending_id = secrets.token_urlsafe(24)
+        with self._lock:
+            self._purge_expired()
+            self._store[pending_id] = {
+                "sql": sql,
+                "description": description,
+                "operation_type": operation_type,
+                "db_uri": db_uri,
+                "db_name": db_name,
+                "user_id": user_id,
+                "expires_at": time.time() + self._ttl,
+            }
+        return pending_id
+
+    def get(self, pending_id: str, user_id: int) -> Optional[Dict[str, Any]]:
+        """
+        Return the pending action dict, or None if not found / expired /
+        owned by a different user.
+        """
+        with self._lock:
+            self._purge_expired()
+            entry = self._store.get(pending_id)
+            if entry is None:
+                return None
+            if entry["user_id"] != user_id:
+                return None
+            return dict(entry)
+
+    def delete(self, pending_id: str) -> None:
+        """Remove a pending action (after confirm or cancel)."""
+        with self._lock:
+            self._store.pop(pending_id, None)
+
+
+pending_store = PendingActionStore(ttl_seconds=600)
+
+# ─────────────────────────────────────────────
 # FASTAPI APP
 # ─────────────────────────────────────────────
 app = FastAPI()
@@ -512,6 +593,14 @@ class UserSettingsUpdate(BaseModel):
     notification_preferences: Optional[dict] = None
 
 
+class ConfirmSqlRequest(BaseModel):
+    pending_id: str
+
+
+class CancelSqlRequest(BaseModel):
+    pending_id: str
+
+
 class ExportRequest(BaseModel):
     data: List[List]
     columns: List[str]
@@ -578,9 +667,8 @@ def get_db():
 
 
 AUTH_SESSION_TTL_SECONDS = int(os.getenv("AUTH_SESSION_TTL", "604800"))
-# SHOW, DESCRIBE, DESC removed — system prompt instructs LLM to use
-# INFORMATION_SCHEMA instead; allowing them here contradicts that rule
-# and causes the LLM to emit shortcuts instead of proper SELECT queries.
+# Only these prefixes are executed immediately without confirmation.
+# All write/DDL statements go through the confirmation flow instead.
 READ_ONLY_SQL_PREFIXES = ("SELECT", "WITH", "EXPLAIN", "PRAGMA")
 
 # Per-dialect injection rules — added to every LLM prompt so the model
@@ -1363,7 +1451,16 @@ def detect_dangerous_sql(sql: str):
 
 
 def is_read_only_sql(sql: str) -> bool:
-    return sql.upper().strip().startswith(READ_ONLY_SQL_PREFIXES)
+    clean_sql = strip_sql_comments(sql).strip()
+    sql_upper = clean_sql.upper()
+    if not sql_upper.startswith(READ_ONLY_SQL_PREFIXES):
+        return False
+    if sql_upper.startswith("WITH") and re.search(
+        r"\b(INSERT|UPDATE|DELETE|DROP|TRUNCATE|ALTER|CREATE|REPLACE|MERGE)\b",
+        sql_upper,
+    ):
+        return False
+    return True
 
 
 def sql_to_table_preview(sql: str):
@@ -1389,22 +1486,14 @@ def sql_to_table_preview(sql: str):
 
 def validate_sql_safety(sql: str) -> Tuple[bool, str]:
     """
-    Fix for BUG 5: comments in LLM output used to cause an immediate hard
-    security error with no retry. Now comments are stripped first (using
-    the existing strip_sql_comments helper) so that an otherwise valid
-    query is not rejected just because the LLM added a comment.
+    Strip comments first, then check for multi-statement injection only.
+    DROP/TRUNCATE are now allowed through — they are gated by the
+    confirmation flow in get_response(), not rejected here.
     """
-    # Strip comments before validating — LLM sometimes adds them
     clean_sql = strip_sql_comments(sql).strip()
-
-    clean_upper = clean_sql.upper().strip()
-    if clean_upper.startswith(("DROP", "TRUNCATE")):
-        return False, "DROP and TRUNCATE operations are not allowed"
-
     statements = clean_sql.split(";")
     if len([s for s in statements if s.strip()]) > 1:
         return False, "Multiple SQL statements are not allowed"
-
     return True, ""
 
 
@@ -1632,13 +1721,17 @@ def build_sql_prompt(
 
     prompt_parts.extend([
         "Output Rules:",
-        "- Return only one read-only SQL query.",
+        "- Return only one SQL query.",
         "- No markdown fences.",
         "- No explanation.",
         "- No comments.",
         "- No trailing semicolon.",
         f"- The query MUST be valid {dialect_display} syntax.",
-        "- The query MUST start with SELECT or WITH.",
+        (
+            "- For read-only questions, generate SELECT / WITH / EXPLAIN / PRAGMA. "
+            "For requested changes, generate the appropriate INSERT / UPDATE / DELETE / "
+            "CREATE / DROP / ALTER / TRUNCATE statement."
+        ),
     ])
 
     return "\n\n".join(prompt_parts)
@@ -1743,6 +1836,130 @@ def execute_read_only_sql(sql_query: str, db, db_name: str) -> str:
                 logger.warning("Error closing database connection: %s", exc)
 
 
+def classify_write_operation(sql: str) -> str:
+    """
+    Return a short label for the type of write operation.
+    Used to build the human-readable confirmation message.
+    """
+    upper = sql.upper().lstrip()
+    if upper.startswith("WITH"):
+        cte_write_match = re.search(
+            r"\b(INSERT|UPDATE|DELETE|DROP|TRUNCATE|ALTER|CREATE|REPLACE|MERGE)\b",
+            upper,
+        )
+        if cte_write_match:
+            return cte_write_match.group(1)
+    if upper.startswith("INSERT"):
+        return "INSERT"
+    if upper.startswith("UPDATE"):
+        return "UPDATE"
+    if upper.startswith("DELETE"):
+        return "DELETE"
+    if upper.startswith("DROP"):
+        return "DROP"
+    if upper.startswith("TRUNCATE"):
+        return "TRUNCATE"
+    if upper.startswith("ALTER"):
+        return "ALTER"
+    if upper.startswith("CREATE"):
+        return "CREATE"
+    if upper.startswith("REPLACE"):
+        return "REPLACE"
+    if upper.startswith("MERGE"):
+        return "MERGE"
+    return "WRITE"
+
+
+def build_confirmation_description(sql: str) -> str:
+    """
+    Build a human-readable, plain-English description of what the SQL will do.
+    Shown to the user in the confirmation dialog before they approve execution.
+    """
+    op = classify_write_operation(sql)
+
+    if op == "INSERT":
+        table_match = re.search(r"INSERT\s+INTO\s+([`\"]?[\w.]+[`\"]?)", sql, re.IGNORECASE)
+        table = table_match.group(1).strip("`\"") if table_match else "a table"
+        return f"This will INSERT a new row into the '{table}' table."
+
+    if op == "UPDATE":
+        table_match = re.search(r"UPDATE\s+([`\"]?[\w.]+[`\"]?)", sql, re.IGNORECASE)
+        table = table_match.group(1).strip("`\"") if table_match else "a table"
+        where_match = re.search(r"WHERE\s+(.+?)(?:ORDER|LIMIT|$)", sql, re.IGNORECASE | re.DOTALL)
+        condition = where_match.group(1).strip() if where_match else None
+        if condition:
+            return f"This will UPDATE rows in '{table}' where {condition}."
+        return (
+            f"⚠️ This will UPDATE ALL rows in '{table}' — no WHERE clause detected. "
+            "Confirm only if this is intentional."
+        )
+
+    if op == "DELETE":
+        table_match = re.search(r"FROM\s+([`\"]?[\w.]+[`\"]?)", sql, re.IGNORECASE)
+        table = table_match.group(1).strip("`\"") if table_match else "a table"
+        where_match = re.search(r"WHERE\s+(.+?)(?:ORDER|LIMIT|$)", sql, re.IGNORECASE | re.DOTALL)
+        condition = where_match.group(1).strip() if where_match else None
+        if condition:
+            return f"This will DELETE rows from '{table}' where {condition}."
+        return (
+            f"🚨 This will DELETE ALL rows from '{table}' — no WHERE clause detected. "
+            "This cannot be undone."
+        )
+
+    if op == "DROP":
+        table_match = re.search(
+            r"DROP\s+(?:TABLE|VIEW|DATABASE|INDEX)?\s+([`\"]?[\w.]+[`\"]?)",
+            sql,
+            re.IGNORECASE,
+        )
+        target = table_match.group(1).strip("`\"") if table_match else "an object"
+        return (
+            f"🚨 This will permanently DROP '{target}' and all its data. "
+            "This action is irreversible."
+        )
+
+    if op == "TRUNCATE":
+        table_match = re.search(r"TRUNCATE\s+(?:TABLE\s+)?([`\"]?[\w.]+[`\"]?)", sql, re.IGNORECASE)
+        table = table_match.group(1).strip("`\"") if table_match else "a table"
+        return (
+            f"🚨 This will TRUNCATE '{table}', permanently deleting all its rows. "
+            "This action is irreversible."
+        )
+
+    if op == "ALTER":
+        table_match = re.search(r"ALTER\s+TABLE\s+([`\"]?[\w.]+[`\"]?)", sql, re.IGNORECASE)
+        table = table_match.group(1).strip("`\"") if table_match else "a table"
+        return f"This will ALTER the structure of the '{table}' table."
+
+    if op == "CREATE":
+        obj_match = re.search(r"CREATE\s+(?:TABLE|VIEW|INDEX|DATABASE)?\s+([`\"]?[\w.]+[`\"]?)", sql, re.IGNORECASE)
+        obj = obj_match.group(1).strip("`\"") if obj_match else "a new object"
+        return f"This will CREATE '{obj}' in the database."
+
+    return "This will execute a write operation on the database. Please confirm."
+
+
+def execute_write_sql(sql: str, db_uri: str) -> Dict[str, Any]:
+    """
+    Execute a confirmed write/DDL SQL statement.
+    Returns a dict with type='write', rowcount, and message.
+    """
+    eng = engine_cache.get(db_uri)
+    with eng.begin() as connection:
+        result = connection.execute(text(sql))
+        try:
+            rowcount = result.rowcount if result.rowcount is not None else 0
+        except Exception:
+            rowcount = 0
+    op = classify_write_operation(sql)
+    return {
+        "type": "write",
+        "operation": op,
+        "rowcount": rowcount,
+        "message": f"✅ {op} executed successfully. {rowcount} row(s) affected.",
+    }
+
+
 def use_ollama() -> bool:
     return USE_OLLAMA.strip().lower() in {"1", "true", "yes", "on"}
 
@@ -1786,7 +2003,7 @@ def prepare_prompt_for_ollama(prompt: str) -> str:
 
     ollama_suffix = (
         "\n\nStrict SQL-only response rule:\n"
-        "Respond with exactly one read-only SQL query and nothing else.\n"
+        "Respond with exactly one SQL query and nothing else.\n"
         "Do not repeat or explain the instructions.\n"
         "Do not describe allowed SQL keywords.\n"
         "Do not wrap the query in quotes.\n"
@@ -1797,9 +2014,9 @@ def prepare_prompt_for_ollama(prompt: str) -> str:
     return sanitized_prompt + ollama_suffix
 
 
-def has_supported_read_only_start(text: str) -> bool:
+def has_supported_sql_start(text: str) -> bool:
     return re.match(
-        r"^\s*(SELECT|WITH|SHOW|DESCRIBE|DESC|EXPLAIN|PRAGMA)\b(?=\s|\()",
+        r"^\s*(SELECT|WITH|EXPLAIN|PRAGMA|INSERT|UPDATE|DELETE|DROP|ALTER|CREATE|REPLACE|MERGE|TRUNCATE)\b(?=\s|\()",
         text,
         flags=re.IGNORECASE,
     ) is not None
@@ -1829,7 +2046,7 @@ def extract_sql_query(response_text: str) -> str:
                 if pattern.startswith(r'"'):
                     candidate = bytes(candidate, "utf-8").decode("unicode_escape")
                 candidate = candidate.strip()
-                if has_supported_read_only_start(candidate):
+                if has_supported_sql_start(candidate):
                     quoted_sql_match = candidate
                     break
             if quoted_sql_match:
@@ -1839,7 +2056,7 @@ def extract_sql_query(response_text: str) -> str:
             cleaned_response = quoted_sql_match
         else:
             sql_start_match = re.search(
-                r"\b(SELECT|WITH|SHOW|DESCRIBE|DESC|EXPLAIN|PRAGMA)\b(?=\s|\()",
+                r"\b(SELECT|WITH|EXPLAIN|PRAGMA|INSERT|UPDATE|DELETE|DROP|ALTER|CREATE|REPLACE|MERGE|TRUNCATE)\b(?=\s|\()",
                 cleaned_response,
                 flags=re.IGNORECASE,
             )
@@ -1855,7 +2072,7 @@ def extract_sql_query(response_text: str) -> str:
         remaining_segments = statements[1:]
         contains_extra_sql = any(
             re.search(
-                r"\b(SELECT|WITH|SHOW|DESCRIBE|DESC|EXPLAIN|PRAGMA|INSERT|UPDATE|DELETE|DROP|ALTER|CREATE|MERGE|TRUNCATE|GRANT|REVOKE)\b",
+                r"\b(SELECT|WITH|SHOW|DESCRIBE|DESC|EXPLAIN|PRAGMA|INSERT|UPDATE|DELETE|DROP|ALTER|CREATE|REPLACE|MERGE|TRUNCATE|GRANT|REVOKE)\b",
                 segment,
                 flags=re.IGNORECASE,
             )
@@ -1872,8 +2089,8 @@ def extract_sql_query(response_text: str) -> str:
     if not cleaned_response:
         raise ValueError("LLM response did not contain a valid SQL query.")
 
-    if not has_supported_read_only_start(cleaned_response):
-        raise ValueError("LLM response did not start with a supported read-only SQL statement.")
+    if not has_supported_sql_start(cleaned_response):
+        raise ValueError("LLM response did not start with a supported SQL statement.")
 
     return cleaned_response
 
@@ -1923,18 +2140,261 @@ def is_ollama_alive() -> bool:
         return False
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# GROQ PROMPT HELPERS
+# Only used by call_groq(). Ollama never touches these.
+# ─────────────────────────────────────────────────────────────────────────────
+
+_GROQ_CORE_RULES = """You are an expert SQL assistant.
+Given a database schema and a user question, output exactly ONE valid SQL query.
+
+STRICT OUTPUT FORMAT:
+- Return ONLY the SQL — no explanation, no markdown fences, no comments, no semicolon
+- Query MUST start with SELECT or WITH
+- Never use SHOW TABLES or DESCRIBE — use INFORMATION_SCHEMA / engine catalog instead
+- Use IS NULL / IS NOT NULL, never = NULL
+- Always GROUP BY every non-aggregate column present in SELECT"""
+
+_GROQ_DIALECT_RULES: Dict[str, str] = {
+    "mysql": (
+        "Dialect: MySQL 8.x\n"
+        "- LIMIT N for pagination\n"
+        "- INFORMATION_SCHEMA.TABLES / INFORMATION_SCHEMA.COLUMNS for metadata\n"
+        "- DATE(), CURDATE(), NOW(), DATE_SUB() for dates\n"
+        "- CONCAT() for string concat\n"
+        "- GROUP BY all non-aggregate SELECT columns"
+    ),
+    "mariadb": (
+        "Dialect: MariaDB 10.x\n"
+        "- LIMIT N for pagination\n"
+        "- INFORMATION_SCHEMA for metadata\n"
+        "- DATE(), CURDATE(), NOW() for dates\n"
+        "- GROUP BY all non-aggregate SELECT columns"
+    ),
+    "postgresql": (
+        "Dialect: PostgreSQL 15+\n"
+        "- LIMIT/OFFSET for pagination\n"
+        "- information_schema for metadata\n"
+        "- ILIKE for case-insensitive LIKE\n"
+        "- NOW() - INTERVAL 'N days' for date arithmetic\n"
+        "- col::TEXT for casting; || for concat\n"
+        "- GROUP BY all non-aggregate SELECT columns"
+    ),
+    "oracle": (
+        "Dialect: Oracle 12c+\n"
+        "- FETCH FIRST N ROWS ONLY (no LIMIT)\n"
+        "- user_tables / user_tab_columns for metadata\n"
+        "- SYSDATE, TO_DATE(), TO_CHAR() for dates\n"
+        "- || for concat; NVL() for nulls; SELECT ... FROM dual\n"
+        "- GROUP BY all non-aggregate SELECT columns"
+    ),
+    "mssql": (
+        "Dialect: SQL Server T-SQL\n"
+        "- TOP(N) or OFFSET/FETCH for pagination\n"
+        "- INFORMATION_SCHEMA for metadata\n"
+        "- GETDATE(), DATEADD() for dates; N'value' for Unicode\n"
+        "- GROUP BY all non-aggregate SELECT columns"
+    ),
+    "db2": (
+        "Dialect: IBM Db2\n"
+        "- FETCH FIRST N ROWS ONLY\n"
+        "- SYSCAT.TABLES / SYSCAT.COLUMNS for metadata\n"
+        "- CURRENT DATE / CURRENT TIMESTAMP (no parentheses)\n"
+        "- GROUP BY all non-aggregate SELECT columns"
+    ),
+    "sqlite": (
+        "Dialect: SQLite 3\n"
+        "- LIMIT/OFFSET for pagination\n"
+        "- sqlite_master WHERE type='table' for tables\n"
+        "- PRAGMA table_info(t) for columns\n"
+        "- DATE('now','-N days') for date arithmetic\n"
+        "- GROUP BY all non-aggregate SELECT columns"
+    ),
+}
+
+_GROQ_DEFAULT_DIALECT = (
+    "Dialect: Standard SQL\n"
+    "- LIMIT N for row limits\n"
+    "- INFORMATION_SCHEMA for metadata\n"
+    "- GROUP BY all non-aggregate SELECT columns"
+)
+
+
+def _get_groq_system_message(dialect: str) -> "SystemMessage":
+    """
+    Return a cached SystemMessage for the given dialect.
+    Built once on first call, reused on every subsequent request.
+    Contains only: core SQL rules + dialect-specific syntax rules.
+    Schema and question are intentionally NOT included here.
+    """
+    key = dialect.lower()
+    with _groq_sys_lock:
+        if key in _groq_sys_cache:
+            return _groq_sys_cache[key]
+        dialect_rules = _GROQ_DIALECT_RULES.get(key, _GROQ_DEFAULT_DIALECT)
+        content = f"{_GROQ_CORE_RULES}\n\n{dialect_rules}"
+        msg = SystemMessage(content=content)
+        _groq_sys_cache[key] = msg
+        return msg
+
+
+def _parse_groq_prompt(prompt: str) -> Dict[str, str]:
+    """
+    Extract dialect, schema, history, and question from the flat prompt
+    string that build_sql_prompt() already assembled.
+
+    build_sql_prompt() joins sections with '\n\n' and uses these exact
+    section headers:
+        'CURRENT TARGET DATABASE ENGINE: <DIALECT>'
+        'Database Schema:'
+        'Conversation History:'
+        'Current User Question:'
+        'Previous SQL Attempt (FAILED ...'   ← optional
+        'Execution Error:'                   ← optional
+
+    We parse them here so call_groq() can reassemble a compact version
+    without touching build_sql_prompt() or generate_llm_response().
+    """
+    result = {
+        "dialect": "sql",
+        "schema": "",
+        "history": "",
+        "question": "",
+        "failed_sql": "",
+        "exec_error": "",
+    }
+
+    # ── dialect ──────────────────────────────────────────────────────────────
+    dialect_match = re.search(
+        r"CURRENT TARGET DATABASE ENGINE:\s*(\w+)", prompt, re.IGNORECASE
+    )
+    if dialect_match:
+        raw = dialect_match.group(1).lower()
+        # map display names back to our dialect keys
+        name_map = {
+            "mysql": "mysql", "mariadb": "mariadb",
+            "postgresql": "postgresql", "postgres": "postgresql",
+            "oracle": "oracle", "mssql": "mssql",
+            "sqlserver": "mssql", "db2": "db2",
+            "ibm_db_sa": "db2", "sqlite": "sqlite",
+        }
+        result["dialect"] = name_map.get(raw, raw)
+
+    # ── schema ───────────────────────────────────────────────────────────────
+    schema_match = re.search(
+        r"Database Schema:\s*(.*?)(?=\n\nConversation History:|\Z)",
+        prompt, re.DOTALL | re.IGNORECASE,
+    )
+    if schema_match:
+        schema = schema_match.group(1).strip()
+        # Hard-cap schema to GROQ_MAX_SCHEMA_CHARS
+        if len(schema) > GROQ_MAX_SCHEMA_CHARS:
+            schema = schema[:GROQ_MAX_SCHEMA_CHARS] + "\n... (schema truncated for token limit)"
+        result["schema"] = schema
+
+    # ── history ───────────────────────────────────────────────────────────────
+    history_match = re.search(
+        r"Conversation History:\s*(.*?)(?=\n\nCurrent User Question:|\Z)",
+        prompt, re.DOTALL | re.IGNORECASE,
+    )
+    if history_match:
+        history_text = history_match.group(1).strip()
+        # Trim to last GROQ_MAX_HISTORY_TURNS turns.
+        # format_chat_history() separates turns with '\n' prefixed by 'Human:' / 'AI:'.
+        lines = [l for l in history_text.splitlines() if l.strip()]
+        if len(lines) > GROQ_MAX_HISTORY_TURNS * 2:
+            lines = lines[-(GROQ_MAX_HISTORY_TURNS * 2):]
+        result["history"] = "\n".join(lines)
+
+    # ── question ──────────────────────────────────────────────────────────────
+    question_match = re.search(
+        r"Current User Question:\s*(.*?)(?=\n\nPrevious SQL Attempt|\n\nGeneration Rules|\n\nCorrection Rules|\Z)",
+        prompt, re.DOTALL | re.IGNORECASE,
+    )
+    if question_match:
+        result["question"] = question_match.group(1).strip()
+
+    # ── failed sql (optional) ─────────────────────────────────────────────────
+    failed_match = re.search(
+        r"Previous SQL Attempt.*?:\s*(.*?)(?=\n\nExecution Error:|\Z)",
+        prompt, re.DOTALL | re.IGNORECASE,
+    )
+    if failed_match:
+        result["failed_sql"] = failed_match.group(1).strip()
+
+    # ── execution error (optional) ────────────────────────────────────────────
+    error_match = re.search(
+        r"Execution Error:\s*(.*?)(?=\n\nCorrection Rules|\Z)",
+        prompt, re.DOTALL | re.IGNORECASE,
+    )
+    if error_match:
+        result["exec_error"] = error_match.group(1).strip()
+
+    return result
+
+
+def _build_groq_human_message(parsed: Dict[str, str]) -> "HumanMessage":
+    """
+    Assemble the HumanMessage that Groq receives.
+    Contains only what changes per request: schema, history, question,
+    and optionally the failed SQL + error for retry calls.
+    """
+    parts: list[str] = []
+
+    if parsed["schema"]:
+        parts.append(f"DATABASE SCHEMA:\n{parsed['schema']}")
+
+    if parsed["history"] and parsed["history"].lower() not in ("none", ""):
+        parts.append(f"CONVERSATION HISTORY (last {GROQ_MAX_HISTORY_TURNS} turns):\n{parsed['history']}")
+
+    parts.append(f"USER QUESTION:\n{parsed['question']}")
+
+    if parsed["failed_sql"]:
+        parts.append(
+            f"PREVIOUS ATTEMPT FAILED — DO NOT REPEAT THIS:\n{parsed['failed_sql']}"
+        )
+    if parsed["exec_error"]:
+        parts.append(f"ERROR FROM PREVIOUS ATTEMPT:\n{parsed['exec_error']}")
+
+    parts.append("OUTPUT: Return only the SQL query. No explanation. No markdown. No semicolon.")
+
+    return HumanMessage(content="\n\n".join(parts))
+
+
 def call_groq(prompt: str) -> str:
+    """
+    Send a SQL-generation request to Groq using an efficient system/user
+    message split instead of a single flat string.
+
+    The `prompt` argument is the same flat string produced by build_sql_prompt()
+    and used by call_ollama(). This function parses it internally to extract
+    only what Groq needs, keeping the caller (generate_llm_response) unchanged.
+
+    Token savings vs old implementation:
+      System message : ~200 tokens  (was ~4000 — full 11-engine system prompt)
+      Schema         : capped at GROQ_MAX_SCHEMA_CHARS chars (~1500 tokens)
+      History        : last GROQ_MAX_HISTORY_TURNS turns only
+      Response budget: GROQ_MAX_TOKENS_OUT=512  (was 6000)
+      Typical total  : ~2000–2500 tokens  (was ~8000–10000)
+    """
     if not GROQ_API_KEY:
         raise RuntimeError("GROQ_API_KEY is not configured.")
+
+    # Parse the flat prompt into its component parts
+    parsed = _parse_groq_prompt(prompt)
+
+    # Build messages
+    system_msg = _get_groq_system_message(parsed["dialect"])
+    human_msg  = _build_groq_human_message(parsed)
 
     llm = ChatGroq(
         api_key=SecretStr(str(GROQ_API_KEY)),
         model="llama-3.3-70b-versatile",
         temperature=0,
-        max_tokens=6000,
+        max_tokens=GROQ_MAX_TOKENS_OUT,
         stop_sequences=None,
     )
-    response = llm.invoke(prompt)
+    response = llm.invoke([system_msg, human_msg])
     return normalize_llm_text(getattr(response, "content", response))
 
 
@@ -1976,19 +2436,16 @@ def get_sql_chain(db, question: str, chat_history: Optional[list] = None) -> str
     return build_sql_prompt(db, question, chat_history or [])
 
 
-def get_response(question: str, db, db_name: str, chat_history: Optional[list] = None):
+def get_response(question: str, db, db_name: str, db_uri: str, user_id: int, chat_history: Optional[list] = None):
     """
-    Generate SQL via LLM, execute it, return structured response string.
-
-    Fix for BUG 2: when Ollama returns prose or invalid SQL and we fall
-    back to Groq, the prompt is now rebuilt with the failed Ollama output
-    attached as a "failed attempt". Previously the identical prompt was
-    sent to Groq, which could produce the same broken output again.
+    Generate SQL via LLM.
+    - SELECT / WITH / EXPLAIN / PRAGMA → execute immediately, return results.
+    - INSERT / UPDATE / DELETE / DROP / TRUNCATE / ALTER / CREATE →
+      do NOT execute; return a confirmation_required response with a pending_id.
     """
     sql_query = "N/A"
     prompt = get_sql_chain(db, question, chat_history or [])
     allow_ollama = True
-    bad_ollama_text: Optional[str] = None
 
     try:
         for generation_attempt in range(2):
@@ -1996,26 +2453,17 @@ def get_response(question: str, db, db_name: str, chat_history: Optional[list] =
             try:
                 response_text = generate_llm_response(prompt, allow_ollama=allow_ollama)
                 sql_query = extract_sql_query(response_text)
-
             except ValueError as exc:
                 if allow_ollama and use_ollama():
                     logger.info(
-                        "Ollama response was not usable as SQL (%s). Rebuilding prompt for Groq fallback.",
-                        exc,
+                        "Ollama response was not usable as SQL (%s). Rebuilding prompt for Groq fallback.", exc
                     )
                     bad_ollama_text = response_text
                     if bad_ollama_text:
-                        logger.debug(
-                            "Unusable Ollama response preview: %s",
-                            truncate_for_log(bad_ollama_text),
-                        )
+                        logger.debug("Unusable Ollama response preview: %s", truncate_for_log(bad_ollama_text))
                     allow_ollama = False
-                    # Rebuild prompt with the bad Ollama output so Groq
-                    # receives different input and knows to correct it.
                     groq_prompt = build_sql_prompt(
-                        db,
-                        question,
-                        chat_history or [],
+                        db, question, chat_history or [],
                         failed_sql=bad_ollama_text,
                         execution_error=(
                             "The previous attempt returned natural language or invalid SQL "
@@ -2027,26 +2475,19 @@ def get_response(question: str, db, db_name: str, chat_history: Optional[list] =
                 else:
                     raise
 
+            # ── Safety: reject multi-statement injections ───────────────
             is_safe, error_msg = validate_sql_safety(sql_query)
             if not is_safe:
                 if allow_ollama and use_ollama():
-                    logger.warning(
-                        "Ollama SQL failed safety validation (%s). Falling back to Groq. SQL: %s",
-                        error_msg,
-                        sql_query,
-                    )
                     allow_ollama = False
                     groq_prompt = build_sql_prompt(
-                        db,
-                        question,
-                        chat_history or [],
+                        db, question, chat_history or [],
                         failed_sql=sql_query,
                         execution_error=f"Safety violation: {error_msg}",
                     )
                     response_text = generate_llm_response(groq_prompt, allow_ollama=False)
                     sql_query = extract_sql_query(response_text)
                     is_safe, error_msg = validate_sql_safety(sql_query)
-
                 if not is_safe:
                     return json.dumps({
                         "type": "error",
@@ -2054,67 +2495,47 @@ def get_response(question: str, db, db_name: str, chat_history: Optional[list] =
                         "sql": sql_query,
                     })
 
-            if not is_read_only_sql(sql_query):
-                if allow_ollama and use_ollama():
-                    logger.warning(
-                        "Ollama SQL was not read-only. Falling back to Groq. SQL: %s",
-                        sql_query,
-                    )
-                    allow_ollama = False
-                    groq_prompt = build_sql_prompt(
-                        db,
-                        question,
-                        chat_history or [],
-                        failed_sql=sql_query,
-                        execution_error=(
-                            "The previous attempt generated a write/DDL statement. "
-                            "Generate a read-only SELECT or WITH query."
-                        ),
-                    )
-                    response_text = generate_llm_response(groq_prompt, allow_ollama=False)
-                    sql_query = extract_sql_query(response_text)
-                    is_safe, error_msg = validate_sql_safety(sql_query)
-                    if not is_safe:
-                        return json.dumps({
-                            "type": "error",
-                            "message": f"❌ Security Check Failed: {error_msg}",
-                            "sql": sql_query,
-                        })
+            # ── Route: read-only → execute immediately ──────────────────
+            if is_read_only_sql(sql_query):
+                try:
+                    return execute_read_only_sql(sql_query, db, db_name)
+                except Exception as select_error:
+                    error_message = str(select_error)
+                    if generation_attempt == 0 and should_retry_sql_generation(error_message):
+                        logger.warning(
+                            "Retrying SQL generation after execution failure. SQL: %s | Error: %s",
+                            sql_query, error_message,
+                        )
+                        prompt = build_sql_prompt(
+                            db, question, chat_history or [],
+                            failed_sql=sql_query,
+                            execution_error=error_message,
+                        )
+                        if use_ollama():
+                            allow_ollama = False
+                        continue
+                    output_data = format_query_execution_error(sql_query, error_message)
+                    return f"SQL: `{sql_query}`\nOutput: {json.dumps(output_data)}"
 
-                if not is_read_only_sql(sql_query):
-                    return json.dumps({
-                        "type": "error",
-                        "sql": sql_query,
-                        "message": (
-                            "Write operations are temporarily disabled for security reasons. "
-                            "Only read-only queries are allowed."
-                        ),
-                    })
-
-            try:
-                return execute_read_only_sql(sql_query, db, db_name)
-
-            except Exception as select_error:
-                error_message = str(select_error)
-                if generation_attempt == 0 and should_retry_sql_generation(error_message):
-                    logger.warning(
-                        "Retrying SQL generation after execution failure. SQL: %s | Error: %s",
-                        sql_query,
-                        error_message,
-                    )
-                    prompt = build_sql_prompt(
-                        db,
-                        question,
-                        chat_history or [],
-                        failed_sql=sql_query,
-                        execution_error=error_message,
-                    )
-                    if use_ollama():
-                        allow_ollama = False
-                    continue
-
-                output_data = format_query_execution_error(sql_query, error_message)
-                return f"SQL: `{sql_query}`\nOutput: {json.dumps(output_data)}"
+            # ── Route: write/DDL → require confirmation ─────────────────
+            op_type = classify_write_operation(sql_query)
+            description = build_confirmation_description(sql_query)
+            pending_id = pending_store.create(
+                sql=sql_query,
+                description=description,
+                operation_type=op_type,
+                db_uri=db_uri,
+                db_name=db_name,
+                user_id=user_id,
+            )
+            return json.dumps({
+                "type": "confirmation_required",
+                "pending_id": pending_id,
+                "operation_type": op_type,
+                "sql": sql_query,
+                "description": description,
+                "expires_in_seconds": 600,
+            })
 
     except Exception as exc:
         logger.exception("Error while generating or executing SQL: %s", exc)
@@ -2134,6 +2555,7 @@ def run_chat_query(
     db_uri: str,
     db_name: str,
     db_type: str,
+    user_id: int,
     chat_history: Optional[list] = None,
 ) -> str:
     if not source_supports_query(db_type):
@@ -2144,7 +2566,14 @@ def run_chat_query(
         return f"SQL: `N/A`\nOutput: {json.dumps(output_data)}"
 
     db = SQLDatabase(engine_cache.get(db_uri))
-    return get_response(question=question, db=db, db_name=db_name, chat_history=chat_history or [])
+    return get_response(
+        question=question,
+        db=db,
+        db_name=db_name,
+        db_uri=db_uri,
+        user_id=user_id,
+        chat_history=chat_history or [],
+    )
 
 
 # ─────────────────────────────────────────────
@@ -2463,6 +2892,7 @@ async def chat_endpoint(
     request: Request,
     chat_request: ChatRequest,
     db_session: Dict[str, Any] = Depends(get_db_session),
+    current_user: User = Depends(get_current_user),
 ):
     try:
         db_uri = db_session["db_uri"]
@@ -2473,6 +2903,7 @@ async def chat_endpoint(
             db_uri,
             db_name,
             db_session["db_type"],
+            current_user.id,
             chat_request.chat_history,
         )
         return {"success": True, "response": response}
@@ -2484,18 +2915,73 @@ async def chat_endpoint(
 
 
 # ─────────────────────────────────────────────
-# CONFIRM-SQL  — DISABLED until properly secured
+# CONFIRM / CANCEL WRITE SQL
 # ─────────────────────────────────────────────
 @app.post("/api/confirm-sql")
-async def confirm_sql_action():
+@limiter.limit("30/minute")
+async def confirm_sql_action(
+    request: Request,
+    body: ConfirmSqlRequest,
+    current_user: User = Depends(get_current_user),
+):
     """
-    Write-SQL execution is temporarily disabled pending full
-    server-side pending-action implementation with audit logging.
+    Execute a previously generated write/DDL SQL after user confirmation.
+    The pending_id must have been issued by /api/chat within the last 10 minutes
+    and must belong to the requesting user.
     """
-    raise HTTPException(
-        status_code=503,
-        detail="Write operations are temporarily disabled. Contact support for updates.",
+    entry = pending_store.get(body.pending_id, current_user.id)
+    if entry is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Pending action not found or expired. Please generate the query again.",
+        )
+
+    sql = entry["sql"]
+    db_uri = entry["db_uri"]
+    db_name = entry["db_name"]
+    op_type = entry["operation_type"]
+
+    # Remove from store so it cannot be confirmed twice
+    pending_store.delete(body.pending_id)
+
+    try:
+        result = await run_in_threadpool(execute_write_sql, sql, db_uri)
+        logger.info(
+            "Write SQL confirmed and executed by user %s. Operation: %s | DB: %s | SQL: %s",
+            current_user.id, op_type, db_name, sql,
+        )
+        response_payload = f"SQL: `{sql}`\nOutput: {json.dumps(result)}"
+        return {"success": True, "response": response_payload}
+    except Exception as exc:
+        logger.exception(
+            "Write SQL execution failed after confirmation. User: %s | SQL: %s | Error: %s",
+            current_user.id, sql, exc,
+        )
+        raise HTTPException(
+            status_code=500,
+            detail=f"Query execution failed: {str(exc)}",
+        )
+
+
+@app.post("/api/cancel-sql")
+async def cancel_sql_action(
+    body: CancelSqlRequest,
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Cancel a pending write/DDL action. The action is removed and will not be executed.
+    """
+    entry = pending_store.get(body.pending_id, current_user.id)
+    if entry is None:
+        # Already expired or cancelled — treat as success silently
+        return {"success": True, "message": "Action was already cancelled or expired."}
+
+    pending_store.delete(body.pending_id)
+    logger.info(
+        "Pending write SQL cancelled by user %s. Operation: %s",
+        current_user.id, entry.get("operation_type"),
     )
+    return {"success": True, "message": "Operation cancelled. No changes were made to the database."}
 
 
 # ─────────────────────────────────────────────

@@ -33,6 +33,7 @@ import {
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { ThemeToggle } from '@/components/ui/theme-toggle';
+import creatorPhoto from '@/assets/my own.png';
 import logo from '@/assets/query-genie-logo.png';
 
 const databaseSources = [
@@ -129,23 +130,14 @@ const sourceCards = [
 ];
 
 const creatorProfile = {
-  sectionLabel: 'Team',
   headline: 'Meet the creator behind Query Genie',
-  name: 'Your Name',
-  role: 'Founder / Developer',
-  photo: '/your-photo.jpg',
-  aboutTitle: 'About me',
-  aboutHeadline: 'Tell visitors who you are and why you built this product',
+  photo: creatorPhoto,
+  aboutHeadline: 'Vaibhav Burad',
   aboutText:
-    'Use this section to introduce yourself, your background, and what inspired you to build Query Genie. This is the perfect place to make the page feel more personal and trustworthy.',
+    'AI & Backend Developer | DevOps & Cloud Engineer | GenAI & Agentic AI Builder ',
   aboutText2:
-    'You can talk about your experience with analytics, AI, product development, and the kind of value you create for users or clients. Replace this copy with your real story and achievements.',
-  highlights: [
-    'Share your mission and the problem you solve',
-    'Highlight your product, design, and engineering strengths',
-    'Add trust signals like experience, projects, or clients',
-    'Invite people to connect, collaborate, or get in touch',
-  ],
+    'Passionate AI & Backend Developer with experience in GenAI, cloud technologies, and scalable application development. Creator of Query Genie, an AI-powered database assistant focused on simplifying data interaction using natural language. Skilled in Python, FastAPI, AWS, and automation workflows, with growing expertise in DevOps and Agentic AI systems.',
+  
 };
 
 const dbColor = new Map(databaseSources.map((source) => [source.name, source.color]));
@@ -581,10 +573,6 @@ const Index = () => {
           <div className="landing-radial absolute inset-0 opacity-50" />
           <div className="relative mx-auto max-w-7xl px-6 lg:px-10">
             <div className="mx-auto mb-14 max-w-2xl text-center">
-              <div className="landing-chip mx-auto mb-4">
-                <Sparkles className="h-3.5 w-3.5" />
-                {creatorProfile.sectionLabel}
-              </div>
               <h2 className="landing-grad-text text-4xl font-extrabold tracking-tight sm:text-5xl">
                 {creatorProfile.headline}
               </h2>
@@ -592,47 +580,35 @@ const Index = () => {
 
             <div className="grid items-center gap-8 lg:grid-cols-12">
               <div className="lg:col-span-5">
-                <div className="landing-card overflow-hidden p-3 sm:p-4">
-                  <div className="relative aspect-[4/5] overflow-hidden rounded-[24px] border border-[var(--landing-line)] bg-gradient-to-br from-violet-500/15 via-[var(--landing-card)] to-cyan-500/10">
-                    {!profileImageError ? (
-                      <img
-                        src={creatorProfile.photo}
-                        alt={creatorProfile.name}
-                        className="h-full w-full object-cover"
-                        onError={() => setProfileImageError(true)}
-                      />
-                    ) : (
-                      <div className="flex h-full flex-col items-center justify-center gap-4 px-6 text-center">
-                        <div className="grid h-24 w-24 place-items-center rounded-full bg-gradient-to-br from-violet-500 to-cyan-500 shadow-[0_0_45px_-18px_rgba(124,92,255,0.9)]">
-                          <UserRound className="h-10 w-10 text-white" />
-                        </div>
-                        <div>
-                          <p className="text-base font-semibold text-[var(--landing-ink)]">Add your photo</p>
-                          <p className="mt-1 text-sm text-[var(--landing-muted)]">
-                            Replace
-                            {' '}
-                            <span className="font-mono">creatorProfile.photo</span>
-                            {' '}
-                            with your image path.
-                          </p>
-                        </div>
+                <div className="relative mx-auto h-[360px] w-full max-w-[520px] overflow-hidden rounded-[24px] bg-gradient-to-br from-violet-500/15 via-[var(--landing-card)] to-cyan-500/10 sm:h-[420px] lg:h-[460px]">
+                  {!profileImageError ? (
+                    <img
+                      src={creatorProfile.photo}
+                      className="h-full w-full object-cover object-[center_22%]"
+                      onError={() => setProfileImageError(true)}
+                    />
+                  ) : (
+                    <div className="flex h-full flex-col items-center justify-center gap-4 px-6 text-center">
+                      <div className="grid h-24 w-24 place-items-center rounded-full bg-gradient-to-br from-violet-500 to-cyan-500 shadow-[0_0_45px_-18px_rgba(124,92,255,0.9)]">
+                        <UserRound className="h-10 w-10 text-white" />
                       </div>
-                    )}
-                  </div>
-
-                  <div className="mt-4 rounded-2xl border border-[var(--landing-line)] bg-[var(--landing-card)] px-5 py-4">
-                    <p className="text-xl font-bold text-[var(--landing-ink)]">{creatorProfile.name}</p>
-                    <p className="mt-1 text-sm text-[var(--landing-muted)]">{creatorProfile.role}</p>
-                  </div>
+                      <div>
+                        <p className="text-base font-semibold text-[var(--landing-ink)]">Add your photo</p>
+                        <p className="mt-1 text-sm text-[var(--landing-muted)]">
+                          Replace
+                          {' '}
+                          <span className="font-mono">creatorProfile.photo</span>
+                          {' '}
+                          with your image path.
+                        </p>
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
 
               <div className="lg:col-span-7">
                 <div className="landing-card p-7 sm:p-9">
-                  <div className="landing-chip mb-5">
-                    <Star className="h-3.5 w-3.5" />
-                    {creatorProfile.aboutTitle}
-                  </div>
                   <h3 className="text-3xl font-bold tracking-tight text-[var(--landing-ink)] sm:text-4xl">
                     {creatorProfile.aboutHeadline}
                   </h3>
@@ -644,15 +620,7 @@ const Index = () => {
                   </p>
 
                   <div className="mt-6 grid gap-3 sm:grid-cols-2">
-                    {creatorProfile.highlights.map((item) => (
-                      <div
-                        key={item}
-                        className="flex items-start gap-3 rounded-2xl border border-[var(--landing-line)] bg-[var(--landing-card)] px-4 py-3"
-                      >
-                        <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-400" />
-                        <span className="text-sm text-[var(--landing-soft)]">{item}</span>
-                      </div>
-                    ))}
+                    
                   </div>
                 </div>
               </div>
