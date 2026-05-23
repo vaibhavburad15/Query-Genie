@@ -80,10 +80,10 @@ STEP 2: The question is sent from the browser (React frontend) to the server (Fa
 STEP 3: The backend reads the DATABASE SCHEMA (table names, column names, column types)
          ⚠️ It reads ONLY the STRUCTURE — NOT the actual data inside the tables
    ↓
-STEP 4: The backend sends THREE things to the AI (Groq LLaMA model):
-         a) System instructions (rules for generating SQL)
-         b) The database SCHEMA (structure only — not data!)
-         c) The user's English question
+STEP 4: The backend sends a provider-specific prompt to the AI:
+         a) Ollama receives the full local SQL prompt
+         b) Groq receives compact cached dialect rules + schema + recent history + question
+         c) Only database STRUCTURE is sent — not actual table data
    ↓
 STEP 5: The AI returns ONLY a SQL query string, for example:
          "SELECT * FROM employees WHERE salary > 50000"
@@ -235,9 +235,10 @@ In Query Genie, we use an LLM to **understand English questions and generate SQL
 | **Parameters** | 70 Billion (70,000,000,000 learned values) |
 | **Hosted On** | Groq Cloud (not on our server) |
 | **API Provider** | Groq (provides ultra-fast inference) |
+| **Local Option** | Ollama can run the model path locally when enabled |
 | **Cost** | Free tier available |
 | **Temperature** | 0 (deterministic — same question always gives same answer) |
-| **Max Tokens** | 500 (limits response length to prevent rambling) |
+| **Groq Max Tokens** | 512 (SQL output budget; prevents unnecessary reserved tokens) |
 
 ### What is Groq?
 
@@ -261,9 +262,14 @@ LangChain provides ready-made building blocks. In Query Genie, we use LangChain 
 
 Here is exactly what happens when you type a question:
 
-#### Step 1: The System Prompt (Instructions for the AI)
+#### Step 1: Provider-Specific Prompting
 
-Before the AI sees any user question, it receives a **240-line instruction manual** (stored in `sql_system_prompt.py`). This tells the AI:
+Query Genie builds one rich prompt in `build_sql_prompt()`, then routes it by provider:
+
+- **Ollama path:** receives the full local prompt exactly as built, including the complete SQL instruction manual, schema context, and conversation history.
+- **Groq path:** parses that same flat prompt inside `call_groq()` and sends a compact two-message request: cached dialect rules in a `SystemMessage`, then schema, recent history, and the current question in a `HumanMessage`.
+
+For local Ollama, the AI can receive the full **240-line instruction manual** (stored in `sql_system_prompt.py`). This tells the AI:
 
 ```
 "You are an expert MySQL database assistant. Given a user's question 
@@ -285,7 +291,7 @@ Key rules in the system prompt:
 - Contains error prevention guidelines
 
 > [!NOTE]
-> The system prompt is like giving an employee a detailed job manual before they start working. The AI follows these rules for every single question.
+> The full system prompt is used by Ollama. Groq uses a smaller dialect-specific system message so requests stay within token-per-minute limits.
 
 #### Step 2: Getting the Database Schema
 
@@ -991,8 +997,12 @@ const DashboardPage = lazy(() => import("./pages/DashboardPage"));
 | Setting | Value | Purpose |
 |---------|-------|---------|
 | `temperature=0` | Deterministic | Same question → same answer (no random variation) |
-| `max_tokens=500` | Response limit | Prevents unnecessarily long responses |
-| History limit | Last 5 only | Keeps prompt small for faster processing |
+| Groq cached system message | Per dialect | Reuses compact SQL rules instead of resending the full prompt |
+| Groq schema cap | 6,000 characters | Keeps schema context useful without overrunning free-tier token limits |
+| Groq history limit | Last 6 turns | Keeps recent conversational context while avoiding unbounded prompts |
+| `max_tokens=512` | SQL response limit | Prevents unnecessary reserved output tokens |
+
+Ollama still receives the full rich local prompt. Only the Groq fallback path is compacted for token efficiency.
 
 ---
 

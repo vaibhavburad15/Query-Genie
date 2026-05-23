@@ -20,6 +20,19 @@ export interface ChatRequestPayload {
   chat_history: ChatMessage[];
 }
 
+export interface ChatApiResponse {
+  success: boolean;
+  response?: string | Record<string, unknown>;
+  error?: string;
+}
+
+export interface SqlActionResponse {
+  success: boolean;
+  response?: string;
+  message?: string;
+  error?: string;
+}
+
 export interface SignupData {
   firstName: string;
   lastName: string;
@@ -69,9 +82,21 @@ export const connectToDB = async (config: DBConfig) =>
   );
 
 export const sendChatMessage = async (payload: ChatRequestPayload) =>
-  apiJson<{ success: boolean; response?: string; error?: string }>('/api/chat', {
+  apiJson<ChatApiResponse>('/api/chat', {
     method: 'POST',
     body: JSON.stringify(payload),
+  });
+
+export const confirmSql = async (pendingId: string) =>
+  apiJson<SqlActionResponse>('/api/confirm-sql', {
+    method: 'POST',
+    body: JSON.stringify({ pending_id: pendingId }),
+  });
+
+export const cancelSql = async (pendingId: string) =>
+  apiJson<SqlActionResponse>('/api/cancel-sql', {
+    method: 'POST',
+    body: JSON.stringify({ pending_id: pendingId }),
   });
 
 export const getChatSessions = async (_userId?: number) =>

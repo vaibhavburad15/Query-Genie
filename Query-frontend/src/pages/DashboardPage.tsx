@@ -4,6 +4,7 @@ import { useToast } from '@/hooks/use-toast';
 import { useChatSession } from '@/hooks/useChatSession';
 import { useAuth } from '@/contexts/AuthContext';
 import { ConnectDatabasePayload, useDatabase } from '@/contexts/DatabaseContext';
+import { cancelSql, confirmSql } from '@/services/api';
 import { LoadingSpinner } from '@/components/ui/loading-spinner';
 import Sidebar from '@/components/dashboard/Sidebar';
 import ChatInput from '@/components/dashboard/ChatInput';
@@ -101,28 +102,75 @@ const DashboardPage = () => {
     }
   };
 
-  const handleConfirmSql = async (_sql: string) => {
-    setMessages((prev: any[]) => [
-      ...prev,
-      {
-        role: 'assistant',
-        type: 'assistant',
-        content: 'Write operations are temporarily disabled for security reasons.',
-        timestamp: new Date().toISOString(),
-      },
-    ]);
+  const handleConfirmSql = async (pendingId: string) => {
+    try {
+      const data = await confirmSql(pendingId);
+      if (!data.success || !data.response) {
+        throw new Error(data.error || data.message || 'Failed to execute the confirmed SQL.');
+      }
+
+      setMessages((prev: any[]) => [
+        ...prev,
+        {
+          role: 'ai',
+          type: 'assistant',
+          content: data.response,
+          timestamp: new Date().toISOString(),
+        },
+      ]);
+
+      toast({
+        title: 'Operation confirmed',
+        description: 'The SQL operation completed successfully.',
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to execute the confirmed SQL.';
+      setMessages((prev: any[]) => [
+        ...prev,
+        {
+          role: 'ai',
+          type: 'assistant',
+          content: `Error: ${message}`,
+          timestamp: new Date().toISOString(),
+        },
+      ]);
+      toast({
+        title: 'Operation failed',
+        description: message,
+        variant: 'destructive',
+      });
+    }
   };
 
-  const handleCancelSql = () => {
-    setMessages((prev: any[]) => [
-      ...prev,
-      {
-        role: 'assistant',
-        type: 'assistant',
-        content: 'SQL execution cancelled by user.',
-        timestamp: new Date().toISOString(),
-      },
-    ]);
+  const handleCancelSql = async (pendingId: string) => {
+    try {
+      const data = await cancelSql(pendingId);
+      setMessages((prev: any[]) => [
+        ...prev,
+        {
+          role: 'ai',
+          type: 'assistant',
+          content: data.message || 'Operation cancelled. No changes were made to the database.',
+          timestamp: new Date().toISOString(),
+        },
+      ]);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to cancel the pending SQL operation.';
+      setMessages((prev: any[]) => [
+        ...prev,
+        {
+          role: 'ai',
+          type: 'assistant',
+          content: `Error: ${message}`,
+          timestamp: new Date().toISOString(),
+        },
+      ]);
+      toast({
+        title: 'Cancel failed',
+        description: message,
+        variant: 'destructive',
+      });
+    }
   };
 
   const handleDeleteConnection = async () => {

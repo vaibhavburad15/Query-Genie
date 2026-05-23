@@ -83,7 +83,9 @@ const ChatInput = memo(({
       console.log('Backend response:', data);
 
       if (data.success && data.response) {
-        const aiMessage: ChatMessage = { role: 'ai', content: data.response };
+        const responseContent =
+          typeof data.response === 'string' ? data.response : JSON.stringify(data.response);
+        const aiMessage: ChatMessage = { role: 'ai', content: responseContent };
         handleSetChatHistory(prevHistory => [...prevHistory, aiMessage]);
       } else {
         const errorMessage: ChatMessage = { 
