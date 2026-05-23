@@ -255,18 +255,18 @@ const Index = () => {
                 <div className="mt-10 grid max-w-lg grid-cols-1 gap-3 sm:grid-cols-3">
                   <div className="landing-card p-4">
                     <Sparkles className="h-5 w-5 text-violet-300" />
-                    <p className="mt-2 text-xs font-medium text-[var(--landing-soft)]">SQL generation</p>
-                    <p className="mt-0.5 text-[11px] text-[var(--landing-muted)]">Schema-aware</p>
+                    <p className="mt-2 text-xs font-medium text-[var(--landing-soft)]">LLM routing</p>
+                    <p className="mt-0.5 text-[11px] text-[var(--landing-muted)]">Ollama + Groq</p>
                   </div>
                   <div className="landing-card p-4">
                     <ShieldCheck className="h-5 w-5 text-emerald-300" />
                     <p className="mt-2 text-xs font-medium text-[var(--landing-soft)]">Safe execution</p>
-                    <p className="mt-0.5 text-[11px] text-[var(--landing-muted)]">Read-only guard</p>
+                    <p className="mt-0.5 text-[11px] text-[var(--landing-muted)]">Through backend</p>
                   </div>
                   <div className="landing-card p-4">
-                    <LayoutDashboard className="h-5 w-5 text-cyan-300" />
-                    <p className="mt-2 text-xs font-medium text-[var(--landing-soft)]">Reusable</p>
-                    <p className="mt-0.5 text-[11px] text-[var(--landing-muted)]">History and favorites</p>
+                    <Zap className="h-5 w-5 text-amber-300" />
+                    <p className="mt-2 text-xs font-medium text-[var(--landing-soft)]">Conformation </p>
+                    <p className="mt-0.5 text-[11px] text-[var(--landing-muted)]">Ask before execute</p>
                   </div>
                 </div>
               </div>
@@ -511,8 +511,8 @@ const Index = () => {
                   <div className="hidden flex-col gap-2 font-mono text-xs md:flex">
                     <GuardrailRow safe label="SELECT" />
                     <GuardrailRow safe label="WITH" />
-                    <GuardrailRow label="DROP" />
-                    <GuardrailRow label="DELETE" />
+                    <GuardrailRow safe label="DROP" />
+                    <GuardrailRow safe label="DELETE" />
                   </div>
                 </div>
               </div>
@@ -565,6 +565,8 @@ const Index = () => {
                   Build saved dashboards with bar, line, pie, area, and scatter charts using drag-and-drop layout tools.
                 </p>
               </div>
+
+             
             </div>
           </div>
         </section>

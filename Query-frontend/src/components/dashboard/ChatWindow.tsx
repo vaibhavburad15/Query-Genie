@@ -2,7 +2,7 @@
 import React, { useState, useEffect, memo, useCallback } from 'react';
 import {
   AlertCircle, Database, Table, BarChart3, Heart, Download,
-  PieChart, ChevronDown, LogOut,
+  PieChart, ChevronDown, Check, Loader2,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -44,7 +44,7 @@ function inferChartType(data: any[], columns: string[]): 'table' | 'bar' | 'line
   return 'table';
 }
 
-function parseSqlOutput(output: string): {
+interface ParsedSqlOutput {
   type: 'select' | 'status' | 'error' | 'confirmation_required';
   data?: string[][];
   columns?: string[];
@@ -53,10 +53,16 @@ function parseSqlOutput(output: string): {
   limited?: boolean;
   table?: { columns: string[]; data: string[][] };
   sql?: string;
-} | null {
+  pending_id?: string;
+  operation_type?: string;
+  description?: string;
+  expires_in_seconds?: number;
+}
+
+function parseSqlOutput(output: string): ParsedSqlOutput | null {
   try {
     const parsed = JSON.parse(output);
-    if (parsed?.type === 'confirmation_required') return parsed;
+    if (parsed?.type) return parsed;
   } catch {
     // not raw JSON
   }
@@ -76,6 +82,142 @@ function parseSqlOutput(output: string): {
   }
 }
 
+function getSqlOperation(sql = '') {
+  return sql.trim().split(/\s+/)[0]?.toUpperCase() || 'WRITE';
+}
+
+function cleanSqlIdentifier(identifier = '') {
+  return identifier.replace(/[;`"\[\]]/g, '').split(/\s+/)[0] || '';
+}
+
+function getImpactedTable(sql = '') {
+  const patterns = [
+    /\bDROP\s+TABLE\s+(?:IF\s+EXISTS\s+)?([`"\[\]\w.]+)/i,
+    /\bTRUNCATE\s+TABLE\s+([`"\[\]\w.]+)/i,
+    /\bALTER\s+TABLE\s+([`"\[\]\w.]+)/i,
+    /\bUPDATE\s+([`"\[\]\w.]+)/i,
+    /\bDELETE\s+FROM\s+([`"\[\]\w.]+)/i,
+    /\bINSERT\s+INTO\s+([`"\[\]\w.]+)/i,
+    /\bCREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?([`"\[\]\w.]+)/i,
+  ];
+
+  for (const pattern of patterns) {
+    const match = sql.match(pattern);
+    if (match?.[1]) return cleanSqlIdentifier(match[1]);
+  }
+
+  return '';
+}
+
+function getConfirmationDescription(confirmation: ParsedSqlOutput) {
+  const operation = (confirmation.operation_type || getSqlOperation(confirmation.sql)).toUpperCase();
+  const tableName = getImpactedTable(confirmation.sql);
+
+  if (operation === 'DROP' && tableName) {
+    return `This will permanently drop the ${tableName} table and all its data. This action is irreversible.`;
+  }
+
+  if (operation === 'TRUNCATE' && tableName) {
+    return `This will permanently remove all rows from the ${tableName} table. This action is irreversible.`;
+  }
+
+  if (operation === 'DELETE' && tableName) {
+    return `This will permanently delete data from the ${tableName} table. This action is irreversible.`;
+  }
+
+  const fallback = confirmation.description?.replace(/^[^\w`'"(]+/, '').trim();
+  return fallback || 'This action will modify your database and cannot be undone.';
+}
+
+interface ConfirmationRequiredCardProps {
+  confirmation: ParsedSqlOutput;
+  isConfirming: boolean;
+  isCancelling: boolean;
+  onConfirm: () => void;
+  onCancel: () => void;
+}
+
+const ConfirmationRequiredCard = ({
+  confirmation,
+  isConfirming,
+  isCancelling,
+  onConfirm,
+  onCancel,
+}: ConfirmationRequiredCardProps) => {
+  const operation = (confirmation.operation_type || getSqlOperation(confirmation.sql)).toUpperCase();
+  const tableName = getImpactedTable(confirmation.sql) || 'database object';
+  const sql = confirmation.sql?.trim() || 'SQL unavailable';
+  const description = getConfirmationDescription(confirmation);
+  const actionInProgress = isConfirming || isCancelling;
+  const actionDisabled = actionInProgress || !confirmation.pending_id;
+
+  return (
+    <div className="flex justify-start">
+      <section className="w-full max-w-3xl overflow-hidden rounded-lg border border-zinc-700 bg-[#2f302d] text-zinc-100 shadow-2xl">
+        <header className="flex items-start gap-4 border-b border-zinc-700 px-7 py-6">
+          <div className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-red-500/15 text-red-300">
+            <AlertCircle className="h-6 w-6" />
+          </div>
+          <div>
+            <h3 className="text-lg font-bold leading-6 text-zinc-100">Confirm operation</h3>
+            <p className="mt-1 text-sm font-semibold text-zinc-400">
+              This action will modify your database and cannot be undone.
+            </p>
+          </div>
+        </header>
+
+        <div className="space-y-6 px-7 py-6">
+          <div className="flex flex-wrap items-center gap-3">
+            <span className="rounded-full bg-red-500/20 px-3 py-1 text-sm font-bold uppercase tracking-wide text-red-300">
+              {operation}
+            </span>
+            <span className="text-sm font-semibold text-zinc-300">Table - {tableName}</span>
+          </div>
+
+          <p className="text-lg font-bold leading-8 text-zinc-100">
+            {description}
+          </p>
+
+          <div className="rounded-lg bg-[#232420] px-5 py-4">
+            <p className="mb-3 text-xs font-bold uppercase tracking-wide text-zinc-400">
+              SQL that will run
+            </p>
+            <pre className="overflow-x-auto font-mono text-sm font-semibold leading-6 text-zinc-100">
+              <code>{sql}</code>
+            </pre>
+          </div>
+        </div>
+
+        <footer className="flex flex-wrap justify-end gap-3 px-7 pb-6">
+          <Button
+            type="button"
+            variant="outline"
+            onClick={onCancel}
+            disabled={actionDisabled}
+            className="min-w-24 border-zinc-600 bg-transparent text-zinc-100 hover:bg-zinc-800 hover:text-white"
+          >
+            {isCancelling && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+            Cancel
+          </Button>
+          <Button
+            type="button"
+            onClick={onConfirm}
+            disabled={actionDisabled}
+            className="min-w-32 border border-red-400/60 bg-red-500/15 font-bold text-red-200 hover:bg-red-500/25 hover:text-red-100"
+          >
+            {isConfirming ? (
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            ) : (
+              <Check className="mr-2 h-4 w-4" />
+            )}
+            Confirm
+          </Button>
+        </footer>
+      </section>
+    </div>
+  );
+};
+
 // ─── Types ───────────────────────────────────────────────────
 interface Message {
   id: string;
@@ -87,8 +229,8 @@ interface Message {
 interface ChatWindowProps {
   messages: Message[];
   onConnectDatabase: () => void;
-  onConfirmSql: (sql: string) => void;
-  onCancelSql: () => void;
+  onConfirmSql: (pendingId: string) => void | Promise<void>;
+  onCancelSql: (pendingId: string) => void | Promise<void>;
   userId: number;
   currentQuestion: string;
   refreshFavorites: () => void;
@@ -117,16 +259,39 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(
   }) => {
     const [sqlVisibility, setSqlVisibility] = useState<Record<string, boolean>>({});
     const [confirmationHandled, setConfirmationHandled] = useState<Record<string, boolean>>({});
+    const [confirmationAction, setConfirmationAction] = useState<Record<string, 'confirm' | 'cancel'>>({});
     const [favoritedQueries, setFavoritedQueries] = useState<Record<string, boolean>>({});
     const [viewMode, setViewMode] = useState<Record<string, 'table' | 'chart'>>({});
     const [connectionStatusOpen, setConnectionStatusOpen] = useState(false);
     const { toast } = useToast();
 
     const handleConnectDatabase = useCallback(() => onConnectDatabase(), [onConnectDatabase]);
-    const handleConfirmSql = useCallback((sql: string) => onConfirmSql(sql), [onConfirmSql]);
-    const handleCancelSql = useCallback(() => onCancelSql(), [onCancelSql]);
+    const handleConfirmSql = useCallback((pendingId: string) => onConfirmSql(pendingId), [onConfirmSql]);
+    const handleCancelSql = useCallback((pendingId: string) => onCancelSql(pendingId), [onCancelSql]);
     const handleRefreshFavorites = useCallback(() => refreshFavorites(), [refreshFavorites]);
     const handleFavoriteToggle = useCallback(() => onFavoriteToggle?.(), [onFavoriteToggle]);
+
+    const runConfirmationAction = useCallback(
+      async (
+        messageId: string,
+        action: 'confirm' | 'cancel',
+        pendingId: string,
+        callback: (pendingId: string) => void | Promise<void>
+      ) => {
+        setConfirmationAction((prev) => ({ ...prev, [messageId]: action }));
+        try {
+          await callback(pendingId);
+          setConfirmationHandled((prev) => ({ ...prev, [messageId]: true }));
+        } finally {
+          setConfirmationAction((prev) => {
+            const next = { ...prev };
+            delete next[messageId];
+            return next;
+          });
+        }
+      },
+      []
+    );
 
     // Check which queries are already favorited
     useEffect(() => {
@@ -354,52 +519,33 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(
                       // Confirmation required
                       if (
                         parsedOutput?.type === 'confirmation_required' &&
-                        parsedOutput.table &&
+                        parsedOutput.pending_id &&
                         !confirmationHandled[message.id]
                       ) {
+                        const currentAction = confirmationAction[message.id];
                         return (
-                          <div key={message.id} className="space-y-4">
-                            <div className="bg-gradient-to-r from-yellow-50 to-orange-50 border border-yellow-300 text-yellow-900 px-6 py-4 rounded-xl shadow-lg">
-                              <p className="font-semibold mb-2 flex items-center gap-2">
-                                <AlertCircle className="w-5 h-5" />
-                                ⚠️ Confirmation Required
-                              </p>
-                              <p className="text-sm">This action will permanently modify the database.</p>
-                            </div>
-                            <div className="bg-white/80 backdrop-blur-sm rounded-xl shadow-lg border border-gray-200 overflow-hidden">
-                              <div className="p-6">
-                                <EnhancedDataTable
-                                  data={parsedOutput.table.data}
-                                  columns={parsedOutput.table.columns}
-                                  pageSize={5}
-                                  searchable={false}
-                                  sortable={false}
-                                  exportable={false}
-                                />
-                              </div>
-                            </div>
-                            <div className="flex gap-3">
-                              <Button
-                                variant="destructive"
-                                onClick={() => {
-                                  setConfirmationHandled((prev) => ({ ...prev, [message.id]: true }));
-                                  handleConfirmSql(parsedOutput.sql!);
-                                }}
-                                className="shadow-lg"
-                              >
-                                Confirm & Execute
-                              </Button>
-                              <Button
-                                variant="outline"
-                                onClick={() => {
-                                  setConfirmationHandled((prev) => ({ ...prev, [message.id]: true }));
-                                  handleCancelSql();
-                                }}
-                              >
-                                Cancel
-                              </Button>
-                            </div>
-                          </div>
+                          <ConfirmationRequiredCard
+                            key={message.id}
+                            confirmation={parsedOutput}
+                            isConfirming={currentAction === 'confirm'}
+                            isCancelling={currentAction === 'cancel'}
+                            onConfirm={() =>
+                              runConfirmationAction(
+                                message.id,
+                                'confirm',
+                                parsedOutput.pending_id!,
+                                handleConfirmSql
+                              )
+                            }
+                            onCancel={() =>
+                              runConfirmationAction(
+                                message.id,
+                                'cancel',
+                                parsedOutput.pending_id!,
+                                handleCancelSql
+                              )
+                            }
+                          />
                         );
                       }
 

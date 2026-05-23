@@ -10,7 +10,7 @@ The project is split into a FastAPI backend and a React/Vite frontend.
 - Metadata browsing for MongoDB and Redis.
 - Email OTP signup, password hashing, bearer auth tokens, and per-user database session tokens.
 - Query result tables, chart visualizations, CSV/JSON export, favorites, chat sessions, query history, and custom dashboards.
-- LLM generation through local Ollama when enabled, with Groq/LangChain support available through environment configuration.
+- LLM generation through local Ollama when enabled, with token-budgeted Groq/LangChain fallback available through environment configuration.
 
 ## Tech Stack
 
@@ -124,6 +124,15 @@ uvicorn backend:app --reload --port 8000
 ```
 
 The API runs at `http://localhost:8000`, and Swagger docs are available at `http://localhost:8000/docs`.
+
+## LLM Provider Behavior
+
+Query Genie keeps the Ollama and Groq paths separate:
+
+- Ollama receives the full rich prompt from `build_sql_prompt()`, including the complete system rules, schema context, and conversation history.
+- Groq parses that same flat prompt inside `call_groq()` and sends a compact message pair instead: a cached dialect-specific `SystemMessage` plus a request-specific `HumanMessage`.
+- Groq schema context is capped at `GROQ_MAX_SCHEMA_CHARS = 6000`, chat history is trimmed to `GROQ_MAX_HISTORY_TURNS = 6`, and SQL output is capped at `GROQ_MAX_TOKENS_OUT = 512`.
+- This keeps the Groq fallback friendly to free-tier token-per-minute limits while preserving the local Ollama prompt quality.
 
 ## Frontend Setup
 

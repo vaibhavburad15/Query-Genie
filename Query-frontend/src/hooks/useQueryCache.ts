@@ -1,7 +1,14 @@
 // src/hooks/useQueryCache.ts - NEW FILE
 
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { sendChatMessage, connectToDB, DBConfig, ChatMessage, ChatRequestPayload } from '@/services/api';
+import {
+  sendChatMessage,
+  connectToDB,
+  DBConfig,
+  ChatMessage,
+  ChatRequestPayload,
+  ChatApiResponse,
+} from '@/services/api';
 
 // ✅ NEW: Dedicated hook for cached queries
 export const useCachedChat = (question: string, chatHistory: ChatMessage[]) => {
@@ -18,7 +25,7 @@ export const useCachedChat = (question: string, chatHistory: ChatMessage[]) => {
 
 // ✅ NEW: Mutation for sending chat messages
 export const useSendChatMessage = () => {
-  return useMutation<{ success: boolean; response?: string; error?: string }, Error, ChatRequestPayload>({
+  return useMutation<ChatApiResponse, Error, ChatRequestPayload>({
     mutationFn: sendChatMessage,
     retry: 3,
     retryDelay: (attemptIndex) => Math.pow(2, attemptIndex) * 1000,
