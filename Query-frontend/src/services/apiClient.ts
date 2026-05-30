@@ -1,20 +1,24 @@
 // src/services/apiClient.ts
-// ─────────────────────────────────────────────────────────────
 // Single source of truth for all API calls.
-// Set VITE_API_URL in your .env / .env.production file.
-// The X-DB-Session header is automatically injected on every
-// request when a session token is stored in sessionStorage.
-// Auth tokens are now handled via HttpOnly cookies (secure against XSS)
-// ─────────────────────────────────────────────────────────────
+// Set VITE_API_URL in the frontend .env / .env.production file to override.
+// Auth is stored in an HttpOnly cookie, so localhost/127.0.0.1 must stay aligned.
 
-export const BASE_URL: string =
+const configuredBaseUrl =
   (import.meta as any).env?.VITE_API_URL ??
-  (import.meta as any).env?.VITE_API_BASE_URL ??
-  'http://localhost:8000';
+  (import.meta as any).env?.VITE_API_BASE_URL;
+
+function getDefaultBaseUrl(): string {
+  if (typeof window === 'undefined') {
+    return 'http://localhost:8000';
+  }
+
+  return `${window.location.protocol}//${window.location.hostname}:8000`;
+}
+
+export const BASE_URL: string = configuredBaseUrl?.trim() || getDefaultBaseUrl();
 
 const SESSION_KEY = 'db_session_token';
-
-// ── Session token helpers ────────────────────────────────────
+export const AUTH_FAILURE_EVENT = 'query-genie:auth-failure';
 
 export function storeDbSessionToken(token: string): void {
   sessionStorage.setItem(SESSION_KEY, token);
@@ -28,7 +32,17 @@ export function clearDbSessionToken(): void {
   sessionStorage.removeItem(SESSION_KEY);
 }
 
-// ── Core fetch wrapper ───────────────────────────────────────
+function clearStoredAuthState(): void {
+  localStorage.removeItem('user');
+  localStorage.removeItem('isAuthenticated');
+  clearDbSessionToken();
+}
+
+function shouldHandleAuthFailure(path: string): boolean {
+  return !['/api/login', '/api/signup', '/api/send-otp'].some((publicPath) =>
+    path.startsWith(publicPath)
+  );
+}
 
 export async function apiFetch(
   path: string,
@@ -40,27 +54,29 @@ export async function apiFetch(
     ...(options.headers as Record<string, string> | undefined),
   };
 
-  // Inject session token header if we have one
   if (dbSessionToken) {
     headers['X-DB-Session'] = dbSessionToken;
   }
 
-  // Auth token is now in HttpOnly cookie - sent automatically by browser
-  // No need to manually add Authorization header
-
-  // Only set Content-Type for requests with a body, and only if not already set
   if (options.body && !(options.body instanceof FormData) && !headers['Content-Type']) {
     headers['Content-Type'] = 'application/json';
   }
 
-  return fetch(`${BASE_URL}${path}`, { 
-    ...options, 
+  const response = await fetch(`${BASE_URL}${path}`, {
+    ...options,
     headers,
-    credentials: 'include'  // Important: send cookies with requests
+    credentials: 'include',
   });
-}
 
-// ── Typed JSON helper ────────────────────────────────────────
+  if (response.status === 401 && shouldHandleAuthFailure(path)) {
+    clearStoredAuthState();
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new Event(AUTH_FAILURE_EVENT));
+    }
+  }
+
+  return response;
+}
 
 export async function apiJson<T = any>(
   path: string,

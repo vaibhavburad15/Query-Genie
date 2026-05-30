@@ -1,7 +1,13 @@
 // src/contexts/AuthContext.tsx
 import { createContext, useContext, useState, ReactNode, useEffect } from 'react';
-import { login as apiLogin, signup as apiSignup, sendOtp as apiSendOtp, logout as apiLogout } from '@/services/api';
-import { clearDbSessionToken } from '@/services/apiClient';
+import {
+  login as apiLogin,
+  signup as apiSignup,
+  sendOtp as apiSendOtp,
+  logout as apiLogout,
+  getUserProfile as apiGetUserProfile,
+} from '@/services/api';
+import { AUTH_FAILURE_EVENT, clearDbSessionToken } from '@/services/apiClient';
 
 interface User {
   id: number;
@@ -46,26 +52,88 @@ export const useAuth = () => {
 export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [user, setUser] = useState<User | null>(null);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const [isLoading, setIsLoading] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
   const [justLoggedIn, setJustLoggedIn] = useState(false);
 
-  // Rehydrate from localStorage on mount (only user data, not token)
+  // Rehydrate only after the backend confirms the HttpOnly cookie is valid.
   useEffect(() => {
-    const storedUser = localStorage.getItem('user');
-    const storedAuth = localStorage.getItem('isAuthenticated');
-    
-    if (storedUser && storedAuth === 'true') {
-      try {
-        setUser(JSON.parse(storedUser));
-        setIsAuthenticated(true);
-      } catch {
-        localStorage.removeItem('user');
-        localStorage.removeItem('isAuthenticated');
-      }
-    } else if (storedUser || storedAuth === 'true') {
+    let cancelled = false;
+
+    const clearStoredAuth = () => {
       localStorage.removeItem('user');
       localStorage.removeItem('isAuthenticated');
-    }
+      clearDbSessionToken();
+    };
+
+    const restoreSession = async () => {
+      const storedUser = localStorage.getItem('user');
+      const storedAuth = localStorage.getItem('isAuthenticated');
+
+      if (!storedUser || storedAuth !== 'true') {
+        if (storedUser || storedAuth === 'true') {
+          clearStoredAuth();
+        }
+        if (!cancelled) {
+          setUser(null);
+          setIsAuthenticated(false);
+          setIsLoading(false);
+        }
+        return;
+      }
+
+      try {
+        const parsedUser = JSON.parse(storedUser) as User;
+        const response = await apiGetUserProfile(parsedUser.id);
+
+        if (!response.success || !response.user) {
+          throw new Error('Stored session is no longer valid.');
+        }
+
+        if (cancelled) return;
+
+        const verifiedUser: User = {
+          id: response.user.id,
+          email: response.user.email,
+          firstName: response.user.firstName,
+          lastName: response.user.lastName,
+          username: response.user.username,
+          contactNumber: response.user.contactNumber ?? '',
+          gender: response.user.gender,
+        };
+
+        setUser(verifiedUser);
+        setIsAuthenticated(true);
+        localStorage.setItem('user', JSON.stringify(verifiedUser));
+      } catch {
+        clearStoredAuth();
+        if (!cancelled) {
+          setUser(null);
+          setIsAuthenticated(false);
+        }
+      } finally {
+        if (!cancelled) {
+          setIsLoading(false);
+        }
+      }
+    };
+
+    void restoreSession();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    const handleAuthFailure = () => {
+      setUser(null);
+      setIsAuthenticated(false);
+      setJustLoggedIn(false);
+      setIsLoading(false);
+    };
+
+    window.addEventListener(AUTH_FAILURE_EVENT, handleAuthFailure);
+    return () => window.removeEventListener(AUTH_FAILURE_EVENT, handleAuthFailure);
   }, []);
 
   const login = async (credentials: { identifier: string; password: string }): Promise<boolean> => {

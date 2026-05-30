@@ -1112,8 +1112,16 @@ def get_current_user(
 ) -> User:
     # Try to get token from cookie first (HttpOnly), then fall back to Authorization header
     token = request.cookies.get("auth_token")
+    
+    if not token and authorization:
+        # Fall back to Authorization header if no cookie
+        try:
+            token = extract_bearer_token(authorization)
+        except HTTPException:
+            pass
+    
     if not token:
-        token = extract_bearer_token(authorization)
+        raise HTTPException(status_code=401, detail="Authentication required. Please log in.")
     
     token_hash = hash_token(token)
     auth_session = db.query(AuthSession).filter(AuthSession.token_hash == token_hash).first()
