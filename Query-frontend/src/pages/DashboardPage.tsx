@@ -29,7 +29,7 @@ const DashboardPage = () => {
   const userId = user?.id;
   React.useEffect(() => {
     if (!userId) {
-      navigate('/login');
+      navigate('/auth');
     }
   }, [userId, navigate]);
 

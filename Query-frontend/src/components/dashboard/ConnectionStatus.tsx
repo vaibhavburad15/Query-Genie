@@ -9,6 +9,7 @@ import {
   DialogDescription,
 } from '@/components/ui/dialog';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { apiFetch } from '@/services/apiClient';
 
 interface TableColumn {
   name: string;
@@ -83,12 +84,7 @@ const ConnectionStatusPopup: React.FC<ConnectionStatusPopupProps> = ({
 
   const fetchTableSchema = async (tableName: string): Promise<TableSchema | null> => {
     try {
-      const response = await fetch(`http://localhost:8000/api/table-schema/${encodeURIComponent(tableName)}`, {
-        method: 'GET',
-        headers: {
-          'Content-Type': 'application/json',
-        }
-      });
+      const response = await apiFetch(`/api/table-schema/${encodeURIComponent(tableName)}`);
 
       if (response.ok) {
         const data = await response.json();
@@ -102,11 +98,8 @@ const ConnectionStatusPopup: React.FC<ConnectionStatusPopupProps> = ({
       }
       
       // Fallback method
-      const fallbackResponse = await fetch('http://localhost:8000/api/chat', {
+      const fallbackResponse = await apiFetch('/api/chat', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
         body: JSON.stringify({
           question: `DESCRIBE \`${tableName}\``,
           chat_history: []

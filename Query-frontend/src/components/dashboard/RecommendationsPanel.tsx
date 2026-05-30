@@ -2,6 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import { ChevronDown, ChevronRight, Sparkles } from 'lucide-react';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { apiFetch } from '@/services/apiClient';
 
 interface RecommendationsPanelProps {
   userId: number;
@@ -35,7 +36,7 @@ const RecommendationsPanel: React.FC<RecommendationsPanelProps> = ({
   const loadRecommendations = async () => {
     setIsLoading(true);
     try {
-      const response = await fetch(`http://localhost:8000/api/recommendations/${userId}`);
+      const response = await apiFetch(`/api/recommendations/${userId}`);
       const data = await response.json();
       setRecommendations(data);
     } catch (error) {
@@ -51,7 +52,7 @@ const RecommendationsPanel: React.FC<RecommendationsPanelProps> = ({
     // Track usage if it's a template
     if (rec.type === 'template' && rec.id) {
       try {
-        await fetch(`http://localhost:8000/api/recommendations/${rec.id}/use`, {
+        await apiFetch(`/api/recommendations/${rec.id}/use`, {
           method: 'POST',
         });
       } catch (error) {
