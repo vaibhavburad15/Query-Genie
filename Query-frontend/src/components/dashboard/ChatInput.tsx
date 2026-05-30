@@ -1,12 +1,15 @@
-// src/components/ChatInput.tsx
+// src/components/ChatInput.tsx - Enhanced with AJAX & RIA features
 
-import React, { useState, memo, useCallback } from 'react';
+import React, { useState, memo, useCallback, useRef, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
-import { Plus, Send, Loader2 } from 'lucide-react';
+import { Plus, Send, Loader2, Mic, MicOff, Sparkles } from 'lucide-react';
 import { ChatRequestPayload } from '@/services/api';
 import { useSendChatMessage } from '@/hooks/useQueryCache';
 import { useQueryTemplates } from '@/hooks/useQueryTemplates';
+import { useDebounce } from '@/hooks/useDebounce';
+import { useOnlineStatus } from '@/hooks/useOnlineStatus';
+import { showWarningToast } from '@/components/ui/toast-notification';
 
 // Define the shape of a chat message
 export interface ChatMessage {
@@ -39,8 +42,21 @@ const ChatInput = memo(({
   renameCurrentChat 
 }: ChatInputProps) => {
   const [message, setMessage] = useState('');
+  const [isRecording, setIsRecording] = useState(false);
+  const [isFocused, setIsFocused] = useState(false);
+  const [charCount, setCharCount] = useState(0);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
   const sendChatMutation = useSendChatMessage();
   const { templates } = useQueryTemplates();
+  const { isOnline } = useOnlineStatus();
+  
+  // Auto-resize textarea
+  useEffect(() => {
+    if (textareaRef.current) {
+      textareaRef.current.style.height = 'auto';
+      textareaRef.current.style.height = `${textareaRef.current.scrollHeight}px`;
+    }
+  }, [message]);
 
   // ✅ Memoized callbacks
   const handleSetChatHistory = useCallback(setChatHistory, [setChatHistory]);
@@ -49,6 +65,15 @@ const ChatInput = memo(({
 
   const handleSubmit = async () => {
     if (!message.trim() || isLoading || !isConnected || !queryEnabled) return;
+
+    // Check online status
+    if (!isOnline) {
+      showWarningToast({
+        title: 'No internet connection',
+        description: 'Please check your connection and try again.',
+      });
+      return;
+    }
 
     const userMessage: ChatMessage = { role: 'user', content: message };
 
@@ -126,29 +151,52 @@ const ChatInput = memo(({
 
   return (
     <div className="bg-transparent p-4">
+      {/* Offline indicator */}
+      {!isOnline && (
+        <div className="max-w-4xl mx-auto mb-3 px-4 py-2 bg-amber-50 border border-amber-200 rounded-lg flex items-center gap-2 text-amber-800 text-sm">
+          <div className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
+          <span>You're offline. Reconnect to send messages.</span>
+        </div>
+      )}
+
       {isConnected && queryEnabled && (
         <div className="max-w-4xl mx-auto mb-4">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
             {templates.slice(0, 4).map((template) => (
               <button
                 key={template.question}
-                onClick={() => setMessage(template.question)}
-                className="p-3 text-left border rounded hover:bg-muted"
+                onClick={() => {
+                  setMessage(template.question);
+                  textareaRef.current?.focus();
+                }}
+                className="group p-3 text-left border rounded-lg hover:bg-muted hover:border-blue-300 transition-all duration-200 hover:shadow-md"
               >
-                <span>{template.icon}</span>
-                <p className="font-medium">{template.title}</p>
-                <p className="text-sm text-muted-foreground">{template.question}</p>
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="text-lg group-hover:scale-110 transition-transform">{template.icon}</span>
+                  <Sparkles className="h-3 w-3 text-blue-500 opacity-0 group-hover:opacity-100 transition-opacity" />
+                </div>
+                <p className="font-medium text-sm">{template.title}</p>
+                <p className="text-xs text-muted-foreground mt-1">{template.question}</p>
               </button>
             ))}
           </div>
         </div>
       )}
+      
       <form onSubmit={(e) => { e.preventDefault(); handleSubmit(); }} className="max-w-4xl mx-auto">
-        <div className="relative">
+        <div className={`relative transition-all duration-200 ${
+          isFocused ? 'ring-2 ring-blue-500 rounded-lg' : ''
+        }`}>
           <Textarea
+            ref={textareaRef}
             value={message}
-            onChange={(e) => setMessage(e.target.value)}
+            onChange={(e) => {
+              setMessage(e.target.value);
+              setCharCount(e.target.value.length);
+            }}
             onKeyDown={handleKeyDown}
+            onFocus={() => setIsFocused(true)}
+            onBlur={() => setIsFocused(false)}
             placeholder={
               !isConnected
                 ? 'Please connect to a database first'
@@ -156,24 +204,44 @@ const ChatInput = memo(({
                   ? 'Ask me anything about your data...'
                   : 'This source supports connection metadata only right now'
             }
-            className="w-full min-h-[3rem] max-h-32 resize-none p-3 pr-24 bg-gray-700 border border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-white"
+            className="w-full min-h-[3rem] max-h-32 resize-none p-3 pr-32 bg-gray-700 border border-gray-600 rounded-lg focus:outline-none text-white placeholder:text-gray-400 transition-all"
             disabled={isLoading || !isConnected || !queryEnabled}
+            aria-label="Chat input"
+            aria-describedby="chat-input-help"
           />
+          
           <div className="absolute right-2 bottom-2 flex items-center gap-1">
+            {/* Voice input button */}
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className={`h-8 w-8 transition-colors ${
+                isRecording ? 'text-red-500 animate-pulse' : ''
+              }`}
+              disabled={isLoading || !isConnected || !queryEnabled}
+              title="Voice input (coming soon)"
+            >
+              {isRecording ? <MicOff size={18} /> : <Mic size={18} />}
+            </Button>
+            
             <Button
               type="button"
               variant="ghost"
               size="icon"
               className="h-8 w-8"
               disabled={isLoading || !isConnected || !queryEnabled}
+              title="Attach file"
             >
               <Plus size={18} />
             </Button>
+            
             <Button
               type="submit"
               size="icon"
-              className="h-8 w-8 bg-blue-600 hover:bg-blue-700"
+              className="h-8 w-8 bg-blue-600 hover:bg-blue-700 transition-all hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed"
               disabled={!message.trim() || isLoading || !isConnected || !queryEnabled}
+              title="Send message (Ctrl+Enter)"
             >
               {isLoading ? (
                 <Loader2 size={16} className="animate-spin" />
@@ -183,9 +251,17 @@ const ChatInput = memo(({
             </Button>
           </div>
         </div>
-        <p className="text-xs text-gray-400 text-center mt-2">
-          Press Enter to send • Shift+Enter for new line
-        </p>
+        
+        <div className="flex items-center justify-between mt-2 px-1">
+          
+          {charCount > 0 && (
+            <span className={`text-xs ${
+              charCount > 1000 ? 'text-amber-400' : 'text-gray-400'
+            }`}>
+              {charCount} / 2000
+            </span>
+          )}
+        </div>
       </form>
     </div>
   );

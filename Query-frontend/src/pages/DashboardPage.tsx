@@ -1,4 +1,4 @@
-import React, { Suspense, lazy } from 'react';
+import React, { Suspense, lazy, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useToast } from '@/hooks/use-toast';
 import { useChatSession } from '@/hooks/useChatSession';
@@ -8,6 +8,10 @@ import { cancelSql, confirmSql } from '@/services/api';
 import { LoadingSpinner } from '@/components/ui/loading-spinner';
 import Sidebar from '@/components/dashboard/Sidebar';
 import ChatInput from '@/components/dashboard/ChatInput';
+import { CommandPalette, createDefaultCommands } from '@/components/ui/command-palette';
+import { useKeyboardShortcuts } from '@/hooks/useKeyboardShortcuts';
+import { useOnlineStatus } from '@/hooks/useOnlineStatus';
+import { showSuccessToast, showWarningToast } from '@/components/ui/toast-notification';
 
 const ChatWindow = lazy(() => import('@/components/dashboard/ChatWindow'));
 const DatabaseConnectionModal = lazy(() =>
@@ -25,6 +29,7 @@ const DashboardPage = () => {
   const { toast } = useToast();
   const { user } = useAuth();
   const navigate = useNavigate();
+  const { isOnline, wasOffline } = useOnlineStatus();
 
   const userId = user?.id;
   React.useEffect(() => {
@@ -32,6 +37,16 @@ const DashboardPage = () => {
       navigate('/auth');
     }
   }, [userId, navigate]);
+
+  // Show notification when coming back online
+  React.useEffect(() => {
+    if (isOnline && wasOffline) {
+      showSuccessToast({
+        title: 'Back online',
+        description: 'Your connection has been restored.',
+      });
+    }
+  }, [isOnline, wasOffline]);
 
   const { isConnected, databaseInfo, databaseTables, connect, disconnect } = useDatabase();
 
@@ -50,8 +65,65 @@ const DashboardPage = () => {
   const [isLoading, setIsLoading] = React.useState(false);
   const [isModalOpen, setIsModalOpen] = React.useState(false);
   const [favoritesRefreshTrigger, setFavoritesRefreshTrigger] = React.useState(0);
+  const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
 
   const refreshFavorites = () => setFavoritesRefreshTrigger((prev) => prev + 1);
+
+  // Command palette handlers
+  const commandHandlers = {
+    onNewChat: useCallback(() => handleNewChat(), []),
+    onConnectDatabase: useCallback(() => setIsModalOpen(true), []),
+    onExportData: useCallback(() => {
+      // Export current data logic
+      showWarningToast({
+        title: 'Export',
+        description: 'Please use the export button in the data table.',
+      });
+    }, []),
+    onOpenSettings: useCallback(() => {
+      // Open settings logic
+      console.log('Open settings');
+    }, []),
+    onOpenFavorites: useCallback(() => {
+      // Scroll to favorites or open favorites panel
+      console.log('Open favorites');
+    }, []),
+    onOpenHistory: useCallback(() => {
+      // Focus on chat history
+      console.log('Open history');
+    }, []),
+    onOpenDashboard: useCallback(() => navigate('/custom-dashboard'), [navigate]),
+  };
+
+  const commands = createDefaultCommands(commandHandlers);
+
+  // Keyboard shortcuts
+  useKeyboardShortcuts([
+    {
+      key: 'k',
+      ctrl: true,
+      callback: () => setCommandPaletteOpen(true),
+      description: 'Open command palette',
+    },
+    {
+      key: 'n',
+      ctrl: true,
+      callback: () => handleNewChat(),
+      description: 'New chat',
+    },
+    {
+      key: 'b',
+      ctrl: true,
+      callback: () => setIsSidebarCollapsed(prev => !prev),
+      description: 'Toggle sidebar',
+    },
+    {
+      key: 'd',
+      ctrl: true,
+      callback: () => setIsModalOpen(true),
+      description: 'Connect database',
+    },
+  ]);
 
   const handleConnect = async (data: ConnectDatabasePayload) => {
     const result = await connect(data);
@@ -195,6 +267,21 @@ const DashboardPage = () => {
 
   return (
     <div className="h-screen flex flex-col bg-background">
+      {/* Offline banner */}
+      {!isOnline && (
+        <div className="bg-amber-500 text-white px-4 py-2 text-center text-sm font-medium flex items-center justify-center gap-2">
+          <div className="w-2 h-2 rounded-full bg-white animate-pulse" />
+          You're offline. Some features may be unavailable.
+        </div>
+      )}
+
+      {/* Command Palette */}
+      <CommandPalette
+        commands={commands}
+        open={commandPaletteOpen}
+        onOpenChange={setCommandPaletteOpen}
+      />
+
       <div className="flex flex-1 overflow-hidden">
         <Sidebar
           isCollapsed={isSidebarCollapsed}

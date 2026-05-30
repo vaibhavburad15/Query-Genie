@@ -1,4 +1,3 @@
-// src/components/dashboard/ChatWindow.tsx
 import React, { useState, useEffect, memo, useCallback } from 'react';
 import {
   AlertCircle, Database, Table, BarChart3, Heart, Download,
@@ -6,6 +5,7 @@ import {
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
+import { InlineLogoLoader } from '@/components/ui/inline-logo-loader';
 import SqlQueryViewer from './SqlQueryViewer';
 import EnhancedDataTable from './EnhancedDataTable';
 import ChartVisualization from './ChartVisualization';
@@ -17,10 +17,8 @@ import { apiFetch } from '@/services/apiClient';
 
 // ─── Skeleton ───────────────────────────────────────────────
 export const ChatWindowSkeleton = () => (
-  <div className="space-y-4 p-4">
-    <Skeleton className="h-20 w-full" />
-    <Skeleton className="h-20 w-3/4" />
-    <Skeleton className="h-32 w-full" />
+  <div className="flex items-center justify-center min-h-[400px]">
+    <InlineLogoLoader size={60} text="Loading chat..." />
   </div>
 );
 

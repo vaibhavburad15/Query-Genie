@@ -1,30 +1,25 @@
 import React from "react";
-import { cn } from "@/lib/utils";
+import { LogoLoader } from "./logo-loader";
 
 interface LoadingSpinnerProps {
   size?: "sm" | "md" | "lg";
   className?: string;
+  showPercentage?: boolean;
 }
 
 export const LoadingSpinner: React.FC<LoadingSpinnerProps> = ({
   size = "md",
-  className,
+  showPercentage = true,
 }) => {
-  const sizeClasses = {
-    sm: "h-4 w-4",
-    md: "h-8 w-8",
-    lg: "h-12 w-12",
+  const sizeMap = {
+    sm: 80,
+    md: 120,
+    lg: 160,
   };
 
   return (
-    <div className="flex items-center justify-center min-h-[200px]">
-      <div
-        className={cn(
-          "animate-spin rounded-full border-2 border-gray-300 border-t-brand-500",
-          sizeClasses[size],
-          className
-        )}
-      />
+    <div className="flex items-center justify-center min-h-screen bg-gradient-to-br from-gray-50 via-purple-50/20 to-gray-50">
+      <LogoLoader size={sizeMap[size]} showPercentage={showPercentage} />
     </div>
   );
 };
