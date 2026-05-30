@@ -4,6 +4,7 @@
 // Set VITE_API_URL in your .env / .env.production file.
 // The X-DB-Session header is automatically injected on every
 // request when a session token is stored in sessionStorage.
+// Auth tokens are now handled via HttpOnly cookies (secure against XSS)
 // ─────────────────────────────────────────────────────────────
 
 export const BASE_URL: string =
@@ -12,7 +13,6 @@ export const BASE_URL: string =
   'http://localhost:8000';
 
 const SESSION_KEY = 'db_session_token';
-const AUTH_TOKEN_KEY = 'auth_token';
 
 // ── Session token helpers ────────────────────────────────────
 
@@ -28,18 +28,6 @@ export function clearDbSessionToken(): void {
   sessionStorage.removeItem(SESSION_KEY);
 }
 
-export function storeAuthToken(token: string): void {
-  localStorage.setItem(AUTH_TOKEN_KEY, token);
-}
-
-export function getAuthToken(): string | null {
-  return localStorage.getItem(AUTH_TOKEN_KEY);
-}
-
-export function clearAuthToken(): void {
-  localStorage.removeItem(AUTH_TOKEN_KEY);
-}
-
 // ── Core fetch wrapper ───────────────────────────────────────
 
 export async function apiFetch(
@@ -47,7 +35,6 @@ export async function apiFetch(
   options: RequestInit = {}
 ): Promise<Response> {
   const dbSessionToken = getDbSessionToken();
-  const authToken = getAuthToken();
 
   const headers: Record<string, string> = {
     ...(options.headers as Record<string, string> | undefined),
@@ -58,16 +45,19 @@ export async function apiFetch(
     headers['X-DB-Session'] = dbSessionToken;
   }
 
-  if (authToken) {
-    headers['Authorization'] = `Bearer ${authToken}`;
-  }
+  // Auth token is now in HttpOnly cookie - sent automatically by browser
+  // No need to manually add Authorization header
 
   // Only set Content-Type for requests with a body, and only if not already set
   if (options.body && !(options.body instanceof FormData) && !headers['Content-Type']) {
     headers['Content-Type'] = 'application/json';
   }
 
-  return fetch(`${BASE_URL}${path}`, { ...options, headers });
+  return fetch(`${BASE_URL}${path}`, { 
+    ...options, 
+    headers,
+    credentials: 'include'  // Important: send cookies with requests
+  });
 }
 
 // ── Typed JSON helper ────────────────────────────────────────
