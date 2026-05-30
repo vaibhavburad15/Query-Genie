@@ -59,6 +59,15 @@ import time
 # ─────────────────────────────────────────────
 logger = logging.getLogger(__name__)
 
+# BUG-019 FIX: Audit logging for security events
+audit_logger = logging.getLogger('audit')
+audit_logger.setLevel(logging.INFO)
+audit_handler = logging.FileHandler('audit.log')
+audit_handler.setFormatter(logging.Formatter(
+    '%(asctime)s - %(levelname)s - %(message)s'
+))
+audit_logger.addHandler(audit_handler)
+
 load_dotenv()
 groq_api_key = os.getenv("GROQ_API_KEY")
 if not groq_api_key:
@@ -67,10 +76,11 @@ if not groq_api_key:
 else:
     GROQ_API_KEY = cast(str, groq_api_key)
 
-# ── Groq token budgets (free tier = 12,000 TPM) ──────────────────────────────
-GROQ_MAX_SCHEMA_CHARS  = 6000   # hard cap on schema text sent to Groq (~1500 tokens)
-GROQ_MAX_HISTORY_TURNS = 6      # keep only the last N turns of chat history
-GROQ_MAX_TOKENS_OUT    = 512    # SQL output is short; 512 is more than enough
+# ── Groq token budgets - UNLIMITED for high-end enterprise users ──────────────
+# BUG-025 FIX: Made configurable via environment variables
+GROQ_MAX_SCHEMA_CHARS  = int(os.getenv("GROQ_MAX_SCHEMA_CHARS", "50000"))  # Increased for complex enterprise schemas
+GROQ_MAX_HISTORY_TURNS = int(os.getenv("GROQ_MAX_HISTORY_TURNS", "50"))    # Support long conversation history (20+ queries)
+GROQ_MAX_TOKENS_OUT    = int(os.getenv("GROQ_MAX_TOKENS_OUT", "4096"))     # Maximum tokens for complex queries
 
 # ── Per-dialect system message cache ─────────────────────────────────────────
 # Built once per dialect on first Groq call, reused forever after.
@@ -132,10 +142,10 @@ engine = create_engine(
     echo=False,
     pool_pre_ping=True,
     pool_recycle=3600,
-    pool_size=10,
-    max_overflow=20,
+    pool_size=100,  # BUG-028 FIX: Increased for high-end enterprise users
+    max_overflow=200,  # BUG-028 FIX: Support up to 300 concurrent connections
     connect_args={
-        "timeout": 30,
+        "timeout": 60,  # Increased timeout for complex queries
         "check_same_thread": False
     },
 )
@@ -290,13 +300,12 @@ db_session_store = DbSessionStore(ttl_seconds=int(os.getenv("DB_SESSION_TTL", "3
 
 
 # ─────────────────────────────────────────────
-# QUERY RESULT ROW LIMIT
+# QUERY RESULT ROW LIMIT - UNLIMITED for enterprise users
+# BUG-025 FIX: Made configurable via environment variables
 # ─────────────────────────────────────────────
-DEFAULT_MAX_RESULT_ROWS = 10000
-MAX_RESULT_ROWS = max(
-    1,
-    min(int(os.getenv("MAX_RESULT_ROWS", str(DEFAULT_MAX_RESULT_ROWS))), DEFAULT_MAX_RESULT_ROWS),
-)
+DEFAULT_MAX_RESULT_ROWS = None  # No limit - return all rows
+MAX_RESULT_ROWS_ENV = os.getenv("MAX_RESULT_ROWS", "")
+MAX_RESULT_ROWS = int(MAX_RESULT_ROWS_ENV) if MAX_RESULT_ROWS_ENV else None  # Enterprise users need all data
 
 
 # ─────────────────────────────────────────────
@@ -416,9 +425,18 @@ class PendingActionStore:
 pending_store = PendingActionStore(ttl_seconds=600)
 
 # ─────────────────────────────────────────────
-# FASTAPI APP
+# FASTAPI APP (BUG-018 FIX: Disable docs in production)
 # ─────────────────────────────────────────────
-app = FastAPI()
+ENV = os.getenv("ENV", "development")
+
+app = FastAPI(
+    title="Query Genie API",
+    description="AI-powered database query assistant",
+    version="1.0.0",
+    docs_url="/docs" if ENV == "development" else None,
+    redoc_url="/redoc" if ENV == "development" else None,
+    openapi_url="/openapi.json" if ENV == "development" else None
+)
 
 limiter = Limiter(key_func=get_remote_address)
 app.state.limiter = limiter
@@ -449,6 +467,53 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.add_middleware(SlowAPIMiddleware)
+
+# ─────────────────────────────────────────────
+# SECURITY HEADERS MIDDLEWARE (BUG-014, BUG-017 FIX)
+# ─────────────────────────────────────────────
+from starlette.middleware.base import BaseHTTPMiddleware
+
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    """Add security headers to all responses"""
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+        
+        # Content Security Policy
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'self'; "
+            "script-src 'self' 'unsafe-inline' 'unsafe-eval'; "
+            "style-src 'self' 'unsafe-inline'; "
+            "img-src 'self' data: https:; "
+            "font-src 'self' data:; "
+            "connect-src 'self' http://localhost:8000 http://127.0.0.1:8000 http://localhost:8082 http://127.0.0.1:8082"
+        )
+        
+        # Prevent MIME type sniffing
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        
+        # Prevent clickjacking
+        response.headers["X-Frame-Options"] = "DENY"
+        
+        # XSS Protection
+        response.headers["X-XSS-Protection"] = "1; mode=block"
+        
+        # Referrer Policy
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        
+        # Permissions Policy
+        response.headers["Permissions-Policy"] = (
+            "geolocation=(), microphone=(), camera=()"
+        )
+        
+        # HSTS (only in production with HTTPS)
+        if os.getenv("ENV") == "production":
+            response.headers["Strict-Transport-Security"] = (
+                "max-age=31536000; includeSubDomains"
+            )
+        
+        return response
+
+app.add_middleware(SecurityHeadersMiddleware)
 
 # ─────────────────────────────────────────────
 # OTP MANAGER
@@ -1041,10 +1106,15 @@ def extract_bearer_token(authorization: Optional[str]) -> str:
 
 
 def get_current_user(
+    request: Request,
     authorization: Optional[str] = Header(default=None),
     db: Session = Depends(get_db),
 ) -> User:
-    token = extract_bearer_token(authorization)
+    # Try to get token from cookie first (HttpOnly), then fall back to Authorization header
+    token = request.cookies.get("auth_token")
+    if not token:
+        token = extract_bearer_token(authorization)
+    
     token_hash = hash_token(token)
     auth_session = db.query(AuthSession).filter(AuthSession.token_hash == token_hash).first()
     if auth_session is None:
@@ -1489,16 +1559,75 @@ def validate_sql_safety(sql: str) -> Tuple[bool, str]:
     Strip comments first, then check for multi-statement injection only.
     DROP/TRUNCATE are now allowed through — they are gated by the
     confirmation flow in get_response(), not rejected here.
+    
+    BUG-003 FIX: Enhanced SQL injection protection
     """
     clean_sql = strip_sql_comments(sql).strip()
+    
+    # Check for multiple statements (SQL injection attempt)
     statements = clean_sql.split(";")
     if len([s for s in statements if s.strip()]) > 1:
         return False, "Multiple SQL statements are not allowed"
+    
+    # Check for dangerous patterns that might bypass LLM
+    dangerous_patterns = [
+        r";\s*DROP",
+        r";\s*DELETE",
+        r";\s*TRUNCATE",
+        r";\s*ALTER",
+        r";\s*CREATE",
+        r"UNION\s+SELECT.*INTO\s+OUTFILE",
+        r"LOAD_FILE\s*\(",
+        r"INTO\s+DUMPFILE",
+        r"xp_cmdshell",
+        r"EXEC\s*\(",
+        r"EXECUTE\s*\(",
+    ]
+    
+    sql_upper = clean_sql.upper()
+    for pattern in dangerous_patterns:
+        if re.search(pattern, sql_upper, re.IGNORECASE):
+            return False, f"Potentially dangerous SQL pattern detected"
+    
     return True, ""
 
 
 def verify_password(plain_password, hashed_password):
     return pwd_context.verify(plain_password, hashed_password)
+
+
+def validate_password(password: str) -> Tuple[bool, str]:
+    """
+    BUG-007 FIX: Strong password policy validation
+    Requires 12+ characters with complexity requirements
+    """
+    if len(password) < 12:
+        return False, "Password must be at least 12 characters long"
+    
+    if not re.search(r'[A-Z]', password):
+        return False, "Password must contain at least one uppercase letter"
+    
+    if not re.search(r'[a-z]', password):
+        return False, "Password must contain at least one lowercase letter"
+    
+    if not re.search(r'[0-9]', password):
+        return False, "Password must contain at least one number"
+    
+    if not re.search(r'[!@#$%^&*(),.?":{}|<>\-_=+\[\]\\|/~`]', password):
+        return False, "Password must contain at least one special character"
+    
+    # Check against common passwords
+    common_passwords = [
+        'password', '12345678', '123456789', '1234567890', 'qwerty', 'abc123', 
+        'monkey', 'letmein', 'trustno1', 'dragon', 'baseball', 'iloveyou',
+        'master', 'sunshine', 'ashley', 'bailey', 'shadow', 'superman',
+        'qazwsx', 'michael', 'football', 'welcome', 'jesus', 'ninja',
+        'mustang', 'password123', 'password1', 'admin', 'root'
+    ]
+    if password.lower() in common_passwords:
+        return False, "Password is too common. Please choose a stronger password."
+    
+    return True, "Password is strong"
 
 
 def get_password_hash(password):
@@ -2601,6 +2730,11 @@ async def signup_user(user: UserCreate, db: Session = Depends(get_db)):
     except EmailNotValidError as e:
         raise HTTPException(status_code=400, detail=f"Invalid email address: {str(e)}")
 
+    # BUG-007 FIX: Validate password strength
+    is_valid, error_msg = validate_password(user.password)
+    if not is_valid:
+        raise HTTPException(status_code=400, detail=error_msg)
+
     is_valid, error_msg = otp_manager.verify(user.email, user.otp, db)
     if not is_valid:
         raise HTTPException(status_code=400, detail=error_msg)
@@ -2623,10 +2757,9 @@ async def signup_user(user: UserCreate, db: Session = Depends(get_db)):
     auth_token = create_auth_token(db_user.id, db)
 
     # Return user so frontend can auto-login without a second round-trip
-    return {
+    response_data = {
         "success": True,
         "message": "User created successfully",
-        "auth_token": auth_token,
         "user": {
             "id": db_user.id,
             "email": db_user.email,
@@ -2636,20 +2769,48 @@ async def signup_user(user: UserCreate, db: Session = Depends(get_db)):
             "gender": db_user.gender,
         },
     }
+    
+    # Create JSONResponse to set cookies
+    from fastapi.responses import JSONResponse
+    response = JSONResponse(content=response_data, status_code=201)
+    
+    # Set HttpOnly cookie for authentication
+    is_production = os.getenv("ENV", "development") == "production"
+    response.set_cookie(
+        key="auth_token",
+        value=auth_token,
+        httponly=True,
+        secure=is_production,
+        samesite="lax",
+        max_age=AUTH_SESSION_TTL_SECONDS,
+        path="/"
+    )
+    
+    return response
+
 
 
 @app.post("/api/login")
 @limiter.limit("10/minute")
 async def login_for_access_token(request: Request, form_data: UserLogin, db: Session = Depends(get_db)):
+    # BUG-019 FIX: Audit logging
+    ip_address = request.client.host if request.client else "unknown"
+    audit_logger.info(f"Login attempt: {form_data.identifier} from {ip_address}")
+    
     user = get_user(form_data.identifier, db)
     if user is None or not verify_password(form_data.password, user.hashed_password):
+        audit_logger.warning(f"Login failed: {form_data.identifier} from {ip_address}")
         raise HTTPException(status_code=401, detail="Incorrect email or password")
+    
+    # BUG-013 FIX: Regenerate session token after successful login
     auth_token = create_auth_token(user.id, db)
+    
+    audit_logger.info(f"Login successful: user_id={user.id}, username={user.username} from {ip_address}")
 
-    return {
+    # Create response with user data
+    response_data = {
         "success": True,
         "message": "Login successful",
-        "auth_token": auth_token,
         "user": {
             "id": user.id,
             "email": user.email,
@@ -2659,6 +2820,25 @@ async def login_for_access_token(request: Request, form_data: UserLogin, db: Ses
             "gender": user.gender,
         },
     }
+    
+    # Create JSONResponse to set cookies
+    from fastapi.responses import JSONResponse
+    response = JSONResponse(content=response_data)
+    
+    # Set HttpOnly cookie for authentication (secure against XSS)
+    # For development, secure=False; for production, set secure=True
+    is_production = os.getenv("ENV", "development") == "production"
+    response.set_cookie(
+        key="auth_token",
+        value=auth_token,
+        httponly=True,  # JavaScript cannot access (XSS protection)
+        secure=is_production,  # HTTPS only in production
+        samesite="lax",  # CSRF protection
+        max_age=AUTH_SESSION_TTL_SECONDS,  # Session duration
+        path="/"
+    )
+    
+    return response
 
 
 @app.get("/api/profile/{user_id}")
@@ -2686,15 +2866,31 @@ async def get_user_profile(
 
 @app.post("/api/logout")
 async def logout_user(
+    request: Request,
     authorization: Optional[str] = Header(default=None),
     db: Session = Depends(get_db),
 ):
-    if authorization:
+    # Try to get token from cookie first, then from Authorization header
+    token = request.cookies.get("auth_token")
+    if not token and authorization:
         try:
-            revoke_auth_token(extract_bearer_token(authorization), db)
+            token = extract_bearer_token(authorization)
         except HTTPException:
             pass
-    return {"success": True, "message": "Logged out successfully"}
+    
+    # Revoke the token if found
+    if token:
+        try:
+            revoke_auth_token(token, db)
+        except HTTPException:
+            pass
+    
+    # Create response and clear the cookie
+    from fastapi.responses import JSONResponse
+    response = JSONResponse(content={"success": True, "message": "Logged out successfully"})
+    response.delete_cookie(key="auth_token", path="/")
+    
+    return response
 
 
 # ─────────────────────────────────────────────
@@ -2769,6 +2965,18 @@ async def connect_file_source(
     current_user: User = Depends(get_current_user),
 ):
     try:
+        # Validate file size (100MB limit for enterprise users)
+        MAX_FILE_SIZE = 100 * 1024 * 1024  # 100MB
+        contents = await file.read()
+        if len(contents) > MAX_FILE_SIZE:
+            raise HTTPException(
+                status_code=400,
+                detail=f"File too large. Maximum size is {MAX_FILE_SIZE / 1024 / 1024}MB"
+            )
+        
+        # Reset file pointer for processing
+        await file.seek(0)
+        
         source_type = normalize_source_type(type)
         if source_type not in FILE_SOURCE_TYPES:
             raise ValueError("This endpoint only supports CSV and Excel uploads.")
@@ -2784,6 +2992,8 @@ async def connect_file_source(
             "supports_query": True,
             "session_token": token,
         }
+    except HTTPException:
+        raise
     except Exception as e:
         return {"success": False, "error": str(e)}
 
@@ -3511,5 +3721,15 @@ async def migrate_dashboards(
 
 @app.on_event("shutdown")
 async def shutdown_event():
+    """BUG-029 FIX: Graceful shutdown with proper cleanup"""
+    logger.info("Application shutdown initiated...")
+    audit_logger.info("Application shutdown - cleaning up resources")
+    
+    # Dispose all cached database engines
     engine_cache.dispose_all()
+    
+    # Dispose main application engine
+    engine.dispose()
+    
+    logger.info("Application shutdown complete - all resources cleaned up")
     print("Application shutdown - resources cleaned up")
