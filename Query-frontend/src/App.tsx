@@ -24,11 +24,7 @@ const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
   const { isAuthenticated, isLoading } = useAuth();
 
   if (isLoading) {
-    return (
-      <div className="h-screen flex items-center justify-center">
-        <div className="animate-spin rounded-full h-32 w-32 border-b-2 border-brand-500"></div>
-      </div>
-    );
+    return <LoadingSpinner size="lg" />;
   }
 
   return isAuthenticated ? <>{children}</> : <Navigate to="/auth" replace />;
@@ -39,11 +35,7 @@ const PublicRoute = ({ children }: { children: React.ReactNode }) => {
   const { isAuthenticated, isLoading } = useAuth();
 
   if (isLoading) {
-    return (
-      <div className="h-screen flex items-center justify-center">
-        <div className="animate-spin rounded-full h-32 w-32 border-b-2 border-brand-500"></div>
-      </div>
-    );
+    return <LoadingSpinner size="lg" />;
   }
 
   return isAuthenticated ? <Navigate to="/dashboard" replace /> : <>{children}</>;
