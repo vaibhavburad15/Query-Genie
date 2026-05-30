@@ -1294,8 +1294,6 @@ The prompt emphasizes:
 ═══════════════════════════════════════════════════════════════
                          END OF PROMPT
 ═══════════════════════════════════════════════════════════════
-"""═════════════════════════════════════════════════
-
 🚀 General:
   - Select only needed columns; avoid SELECT * on wide tables
   - Filter early (WHERE / $match) before aggregation
