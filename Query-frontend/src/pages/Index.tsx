@@ -18,6 +18,7 @@ import {
   Layers,
   LayoutDashboard,
   LineChart,
+  Linkedin,
   Lock,
   MessageSquare,
   Play,
@@ -72,7 +73,7 @@ const workflowSteps = [
     accent: 'cyan',
     step: 'STEP / 02',
     title: 'Ask in plain English',
-    text: 'Query Genie builds SQL from your schema context and recent conversation history.',
+    text: 'Query Genie generates database-specific queries from your schema context and conversation history.',
     extra: (
       <div className="landing-code-strip mt-6 font-mono text-[11px]">
         &gt; show monthly active users by region
@@ -101,8 +102,8 @@ const workflowSteps = [
 
 const sourceCards = [
   {
-    title: 'Queryable SQL sources',
-    subtitle: 'Full natural-language querying',
+    title: 'SQL database sources',
+    subtitle: 'Full natural-language querying with SQL',
     icon: Terminal,
     status: 'Queryable',
     statusColor: 'bg-emerald-400',
@@ -111,7 +112,7 @@ const sourceCards = [
   },
   {
     title: 'File uploads',
-    subtitle: 'Uploaded files become temporary SQLite sources.',
+    subtitle: 'Uploaded files become temporary SQLite sources',
     icon: FileUp,
     status: 'Staged',
     statusColor: 'bg-emerald-400',
@@ -119,8 +120,8 @@ const sourceCards = [
     sources: ['CSV', 'Excel'],
   },
   {
-    title: 'Metadata browsing',
-    subtitle: 'Inspect tables, collections, keys, and schemas.',
+    title: 'NoSQL metadata browsing',
+    subtitle: 'Inspect collections, keys, and schemas',
     icon: Search,
     status: 'Browse only',
     statusColor: 'bg-amber-400',
@@ -233,7 +234,7 @@ const Index = () => {
                 </h1>
                 <p className="mt-7 max-w-xl text-lg leading-relaxed text-[var(--landing-soft)]">
                   Query Genie connects to your databases and uploaded spreadsheets, converts natural
-                  language into schema-aware SQL, and presents results as tables, charts, favorites,
+                  language into database-specific queries, and presents results as tables, charts, favorites,
                   history, and custom dashboards.
                 </p>
 
@@ -305,7 +306,7 @@ const Index = () => {
                       </div>
                       <div className="min-w-0 flex-1">
                         <div className="mb-2 font-mono text-[11px] text-[var(--landing-muted)]">
-                          Generated SQL - validated read-only
+                          Generated Query - validated read-only
                         </div>
                         <pre className="overflow-x-auto rounded-xl border border-[var(--landing-line)] bg-[var(--landing-code)] p-4 font-mono text-[12px] leading-6 text-[var(--landing-code-ink)]">
                           <code>
@@ -417,7 +418,7 @@ const Index = () => {
                 From connection to reusable insight.
               </h2>
               <p className="mt-4 text-lg text-[var(--landing-muted)]">
-                Three steps. No SQL knowledge required.
+                Three steps. No query language required.
               </p>
             </div>
 
@@ -457,8 +458,8 @@ const Index = () => {
                 Honest support matrix.
               </h2>
               <p className="mt-4 leading-relaxed text-[var(--landing-muted)]">
-                Straight from the codebase. SQL-style sources and staged files are enabled for
-                natural-language querying. MongoDB and Redis are currently for metadata browsing.
+                Direct from the codebase. SQL databases and staged files support full natural-language
+                querying. MongoDB and Redis are currently available for metadata browsing.
               </p>
               <div className="mt-6 flex items-center gap-3 text-xs text-[var(--landing-muted)]">
                 <span className="landing-pulse-dot h-3 w-3 rounded-full bg-emerald-400" />
@@ -501,35 +502,39 @@ const Index = () => {
               <div className="landing-card landing-bento-card p-7 md:col-span-4">
                 <div className="flex items-start justify-between">
                   <div>
-                    <FeatureIcon icon={ShieldCheck} accent="green" />
-                    <h3 className="mb-2 text-xl font-bold">Read-only guardrails</h3>
+                    <FeatureIcon icon={MessageSquare} accent="violet" />
+                    <h3 className="mb-2 text-xl font-bold">Natural language to query</h3>
                     <p className="max-w-md text-sm text-[var(--landing-muted)]">
-                      The backend accepts safe read queries and keeps write execution disabled until
-                      server-side approvals are complete.
+                      Ask questions in plain English and get database-specific queries automatically generated 
+                      from your schema context. Works with SQL databases, file uploads, and NoSQL metadata.
                     </p>
                   </div>
-                  <div className="hidden flex-col gap-2 font-mono text-xs md:flex">
-                    <GuardrailRow safe label="SELECT" />
-                    <GuardrailRow safe label="WITH" />
-                    <GuardrailRow safe label="DROP" />
-                    <GuardrailRow safe label="DELETE" />
+                  <div className="hidden flex-col gap-3 text-xs md:flex">
+                    <div className="landing-chip py-1.5 text-[11px]">
+                      <Sparkles className="h-3 w-3" />
+                      AI-powered
+                    </div>
+                    <div className="landing-chip py-1.5 text-[11px]">
+                      <Database className="h-3 w-3" />
+                      Multi-DB
+                    </div>
                   </div>
                 </div>
               </div>
 
               <div className="landing-card landing-bento-card p-7 md:col-span-2">
-                <FeatureIcon icon={KeyRound} accent="violet" />
-                <h3 className="mb-2 text-lg font-bold">Per-user sessions</h3>
+                <FeatureIcon icon={ShieldCheck} accent="green" />
+                <h3 className="mb-2 text-lg font-bold">Query validation</h3>
                 <p className="text-sm text-[var(--landing-muted)]">
-                  Auth tokens and database-session tokens keep every user attached to their own active source.
+                  All queries are validated for safety. Write operations require explicit approval before execution.
                 </p>
               </div>
 
               <div className="landing-card landing-bento-card p-7 md:col-span-2">
                 <FeatureIcon icon={BarChart3} accent="cyan" />
-                <h3 className="mb-2 text-lg font-bold">Tables and charts</h3>
+                <h3 className="mb-2 text-lg font-bold">Interactive visualizations</h3>
                 <p className="text-sm text-[var(--landing-muted)]">
-                  Sortable, searchable tables with CSV/JSON export and chart views powered by Recharts.
+                  View results as sortable tables or dynamic charts. Export to CSV/JSON with one click.
                 </p>
               </div>
 
@@ -539,7 +544,7 @@ const Index = () => {
                     <FeatureIcon icon={Star} accent="pink" />
                     <h3 className="mb-2 text-xl font-bold">Favorites and history</h3>
                     <p className="max-w-md text-sm text-[var(--landing-muted)]">
-                      Save frequently used queries, revisit chat sessions, and track execution history with stats.
+                      Save frequently used queries, revisit chat sessions, and track execution history with detailed stats.
                     </p>
                   </div>
                   <div className="hidden w-56 space-y-2 md:block">
@@ -552,9 +557,9 @@ const Index = () => {
 
               <div className="landing-card landing-bento-card p-7 md:col-span-3">
                 <FeatureIcon icon={FileSpreadsheet} accent="amber" />
-                <h3 className="mb-2 text-lg font-bold">CSV and Excel staging</h3>
+                <h3 className="mb-2 text-lg font-bold">File upload support</h3>
                 <p className="text-sm text-[var(--landing-muted)]">
-                  Uploaded files are staged as temporary SQLite sources so they can be queried like tables.
+                  Upload CSV and Excel files. They're automatically staged as queryable tables for instant analysis.
                 </p>
               </div>
 
@@ -562,7 +567,7 @@ const Index = () => {
                 <FeatureIcon icon={LayoutDashboard} accent="fuchsia" />
                 <h3 className="mb-2 text-lg font-bold">Custom dashboards</h3>
                 <p className="text-sm text-[var(--landing-muted)]">
-                  Build saved dashboards with bar, line, pie, area, and scatter charts using drag-and-drop layout tools.
+                  Create personalized dashboards with multiple chart types and drag-and-drop layouts.
                 </p>
               </div>
 
@@ -621,8 +626,23 @@ const Index = () => {
                     {creatorProfile.aboutText2}
                   </p>
 
-                  <div className="mt-6 grid gap-3 sm:grid-cols-2">
-                    
+                  <div className="mt-6 flex gap-3">
+                    <Button
+                      variant="outline"
+                      onClick={() => window.open('https://www.linkedin.com/in/vaibhav-burad-278414243/', '_blank')}
+                      className="landing-btn-ghost h-10 rounded-xl px-4"
+                    >
+                      <Linkedin className="mr-2 h-4 w-4" />
+                      LinkedIn
+                    </Button>
+                    <Button
+                      variant="outline"
+                      onClick={() => window.open('https://github.com/vaibhavburad15/Query-Genie', '_blank')}
+                      className="landing-btn-ghost h-10 rounded-xl px-4"
+                    >
+                      <Github className="mr-2 h-4 w-4" />
+                      GitHub
+                    </Button>
                   </div>
                 </div>
               </div>
@@ -638,7 +658,7 @@ const Index = () => {
               Ready when you are
             </div>
             <h2 className="landing-grad-text text-4xl font-extrabold leading-[1.05] tracking-tight sm:text-6xl">
-              Stop writing SQL.
+              Stop writing queries.
               <br />
               Start asking questions.
             </h2>
@@ -659,14 +679,6 @@ const Index = () => {
                 View on GitHub
               </Button>
             </div>
-            <div className="mt-10 flex flex-wrap justify-center gap-x-6 gap-y-3 text-xs text-[var(--landing-muted)]">
-              {['No credit card required', 'Read-only and safe', 'Self-hostable'].map((item) => (
-                <span key={item} className="flex items-center gap-2">
-                  <Check className="h-3.5 w-3.5 text-emerald-400" />
-                  {item}
-                </span>
-              ))}
-            </div>
           </div>
         </section>
       </main>
@@ -679,7 +691,7 @@ const Index = () => {
               <span className="font-bold tracking-tight">Query Genie</span>
             </div>
             <p className="text-sm leading-relaxed text-[var(--landing-muted)]">
-              Natural-language SQL, results, and dashboards built around what your database can actually answer.
+              Natural-language queries, results, and dashboards built around what your data sources can actually answer.
             </p>
           </div>
 
@@ -724,7 +736,7 @@ const Index = () => {
 
         <div className="border-t border-[var(--landing-line)]">
           <div className="mx-auto flex max-w-7xl flex-col items-center justify-between gap-3 px-6 py-5 text-xs text-[var(--landing-muted)] sm:flex-row lg:px-10">
-            <span>(c) 2026 Query Genie. All rights reserved.</span>
+            <span>@ 2026 Query Genie. All rights reserved.</span>
             <div className="flex gap-5">
               <a className="hover:text-[var(--landing-ink)]" href="#">
                 Privacy
