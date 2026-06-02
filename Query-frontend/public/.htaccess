@@ -1,0 +1,16 @@
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  RewriteBase /
+
+  # Let backend/API requests pass through if this domain proxies them.
+  RewriteCond %{REQUEST_URI} ^/api(/|$)
+  RewriteRule ^ - [L]
+
+  # Serve real files and folders normally.
+  RewriteCond %{REQUEST_FILENAME} -f [OR]
+  RewriteCond %{REQUEST_FILENAME} -d
+  RewriteRule ^ - [L]
+
+  # React Router fallback for direct refresh/back on clean URLs.
+  RewriteRule ^ /index.html [L]
+</IfModule>
