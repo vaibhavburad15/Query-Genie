@@ -113,7 +113,6 @@ export const DatabaseProvider = ({ children }: { children: ReactNode }) => {
             type: data.type || 'mysql',
             supportsQuery: Boolean(data.supports_query),
           });
-          void fetchTables();
         } else {
           clearDbSessionToken();
         }

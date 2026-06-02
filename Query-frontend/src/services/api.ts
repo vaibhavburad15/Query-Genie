@@ -102,6 +102,9 @@ export const cancelSql = async (pendingId: string) =>
 export const getChatSessions = async (_userId?: number) =>
   apiJson<any[]>('/api/chat-sessions');
 
+export const getChatSession = async (sessionId: number) =>
+  apiJson<any>(`/api/chat-sessions/${sessionId}`);
+
 export const createChatSession = async (session: {
   title: string;
   messages: ChatMessage[];

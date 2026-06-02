@@ -40,7 +40,7 @@ from datetime import datetime
 from sqlalchemy import Column, Integer, String, Text, DateTime
 from datetime import datetime
 from pathlib import Path as FilePath
-from urllib.parse import quote_plus
+from urllib.parse import quote_plus, urlparse
 
 from extended_models import (
     FavoriteQuery,
@@ -450,6 +450,8 @@ DEFAULT_ALLOWED_ORIGINS = [
     "http://127.0.0.1:8081",
     "http://localhost:8082",
     "http://127.0.0.1:8082",
+    "https://www.querygenie.tech",
+    "https://querygenie.tech",
 ]
 
 allowed_origins_env = os.getenv("ALLOWED_ORIGINS")
@@ -732,6 +734,140 @@ def get_db():
 
 
 AUTH_SESSION_TTL_SECONDS = int(os.getenv("AUTH_SESSION_TTL", "604800"))
+AUTH_COOKIE_NAME = os.getenv("AUTH_COOKIE_NAME", "auth_token")
+AUTH_COOKIE_DOMAIN = os.getenv("AUTH_COOKIE_DOMAIN") or None
+
+
+def parse_bool_env(value: Optional[str]) -> Optional[bool]:
+    if value is None or value.strip() == "":
+        return None
+
+    normalized = value.strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+
+    logger.warning("Ignoring invalid boolean environment value: %s", value)
+    return None
+
+
+def is_production_environment() -> bool:
+    return os.getenv("ENV", "development").strip().lower() == "production"
+
+
+def get_origin_scheme_and_host(request: Request) -> Tuple[Optional[str], Optional[str]]:
+    origin = request.headers.get("origin")
+    if not origin:
+        return None, None
+
+    parsed = urlparse(origin)
+    return parsed.scheme.lower() or None, parsed.hostname.lower() if parsed.hostname else None
+
+
+def get_request_host(request: Request) -> Optional[str]:
+    raw_host = request.headers.get("x-forwarded-host") or request.headers.get("host")
+    if not raw_host:
+        return request.url.hostname.lower() if request.url.hostname else None
+
+    first_host = raw_host.split(",", 1)[0].strip()
+    parsed = urlparse(f"//{first_host}")
+    if parsed.hostname:
+        return parsed.hostname.lower()
+
+    return first_host.split(":", 1)[0].lower() or None
+
+
+def request_uses_https_context(request: Request) -> bool:
+    forwarded_proto = request.headers.get("x-forwarded-proto", "").split(",", 1)[0].strip().lower()
+    if forwarded_proto:
+        return forwarded_proto == "https"
+
+    if request.url.scheme == "https":
+        return True
+
+    origin_scheme, _ = get_origin_scheme_and_host(request)
+    return origin_scheme == "https"
+
+
+def request_is_cross_origin(request: Request) -> bool:
+    _, origin_host = get_origin_scheme_and_host(request)
+    request_host = get_request_host(request)
+    return bool(origin_host and request_host and origin_host != request_host)
+
+
+def get_auth_cookie_samesite(request: Request) -> str:
+    configured = os.getenv("AUTH_COOKIE_SAMESITE", "").strip().lower()
+    if configured:
+        if configured in {"lax", "strict", "none"}:
+            return configured
+        logger.warning("Ignoring invalid AUTH_COOKIE_SAMESITE value: %s", configured)
+
+    if is_production_environment() or (request_is_cross_origin(request) and request_uses_https_context(request)):
+        return "none"
+
+    return "lax"
+
+
+def get_auth_cookie_settings(request: Request) -> Dict[str, Any]:
+    samesite = get_auth_cookie_samesite(request)
+    secure_override = parse_bool_env(os.getenv("AUTH_COOKIE_SECURE"))
+    secure = (
+        secure_override
+        if secure_override is not None
+        else is_production_environment() or request_uses_https_context(request)
+    )
+
+    if samesite == "none":
+        secure = True
+
+    return {
+        "key": AUTH_COOKIE_NAME,
+        "httponly": True,
+        "secure": secure,
+        "samesite": samesite,
+        "path": "/",
+        "domain": AUTH_COOKIE_DOMAIN,
+    }
+
+
+def set_auth_cookie(response: Any, request: Request, token: str) -> None:
+    response.set_cookie(
+        value=token,
+        max_age=AUTH_SESSION_TTL_SECONDS,
+        **get_auth_cookie_settings(request),
+    )
+
+
+def clear_auth_cookie(response: Any, request: Request) -> None:
+    response.delete_cookie(**get_auth_cookie_settings(request))
+
+
+def parse_chat_session_messages(messages: Any) -> List[Dict[str, Any]]:
+    if not messages:
+        return []
+
+    try:
+        parsed = json.loads(str(messages))
+    except (TypeError, json.JSONDecodeError):
+        return []
+
+    return parsed if isinstance(parsed, list) else []
+
+
+def serialize_chat_session(session: ChatSession, include_messages: bool = True) -> Dict[str, Any]:
+    serialized: Dict[str, Any] = {
+        "id": session.id,
+        "title": session.title,
+        "timestamp": datetime.utcnow().isoformat(),
+    }
+
+    if include_messages:
+        serialized["messages"] = parse_chat_session_messages(session.messages)
+
+    return serialized
+
+
 # Only these prefixes are executed immediately without confirmation.
 # All write/DDL statements go through the confirmation flow instead.
 READ_ONLY_SQL_PREFIXES = ("SELECT", "WITH", "EXPLAIN", "PRAGMA")
@@ -1111,7 +1247,7 @@ def get_current_user(
     db: Session = Depends(get_db),
 ) -> User:
     # Try to get token from cookie first (HttpOnly), then fall back to Authorization header
-    token = request.cookies.get("auth_token")
+    token = request.cookies.get(AUTH_COOKIE_NAME)
     
     if not token and authorization:
         # Fall back to Authorization header if no cookie
@@ -1369,19 +1505,11 @@ def get_sql_tables_info(db_uri: str) -> List[Dict[str, Any]]:
     engine = engine_cache.get(db_uri)
     inspector = sqlalchemy_inspect(engine)
     table_names = inspector.get_table_names()
-    preparer = engine.dialect.identifier_preparer
 
-    tables: List[Dict[str, Any]] = []
-    with engine.connect() as connection:
-        for table_name in table_names:
-            quoted_table = preparer.quote_identifier(table_name)
-            row_count = 0
-            try:
-                row_count = int(connection.execute(text(f"SELECT COUNT(*) FROM {quoted_table}")).scalar() or 0)
-            except Exception as table_error:
-                print(f"Error counting rows for table {table_name}: {table_error}")
-            tables.append({"name": table_name, "rowCount": row_count, "lastUpdated": "unknown"})
-    return tables
+    return [
+        {"name": table_name, "rowCount": 0, "lastUpdated": "unknown"}
+        for table_name in table_names
+    ]
 
 
 def get_sql_table_schema(db_uri: str, table_name: str) -> List[Dict[str, Any]]:
@@ -2732,7 +2860,7 @@ async def send_otp_for_signup(request: Request, otp_request: OtpRequest, db: Ses
 
 
 @app.post("/api/signup", status_code=201)
-async def signup_user(user: UserCreate, db: Session = Depends(get_db)):
+async def signup_user(request: Request, user: UserCreate, db: Session = Depends(get_db)):
     try:
         validate_email(user.email)
     except EmailNotValidError as e:
@@ -2783,16 +2911,7 @@ async def signup_user(user: UserCreate, db: Session = Depends(get_db)):
     response = JSONResponse(content=response_data, status_code=201)
     
     # Set HttpOnly cookie for authentication
-    is_production = os.getenv("ENV", "development") == "production"
-    response.set_cookie(
-        key="auth_token",
-        value=auth_token,
-        httponly=True,
-        secure=is_production,
-        samesite="lax",
-        max_age=AUTH_SESSION_TTL_SECONDS,
-        path="/"
-    )
+    set_auth_cookie(response, request, auth_token)
     
     return response
 
@@ -2834,17 +2953,7 @@ async def login_for_access_token(request: Request, form_data: UserLogin, db: Ses
     response = JSONResponse(content=response_data)
     
     # Set HttpOnly cookie for authentication (secure against XSS)
-    # For development, secure=False; for production, set secure=True
-    is_production = os.getenv("ENV", "development") == "production"
-    response.set_cookie(
-        key="auth_token",
-        value=auth_token,
-        httponly=True,  # JavaScript cannot access (XSS protection)
-        secure=is_production,  # HTTPS only in production
-        samesite="lax",  # CSRF protection
-        max_age=AUTH_SESSION_TTL_SECONDS,  # Session duration
-        path="/"
-    )
+    set_auth_cookie(response, request, auth_token)
     
     return response
 
@@ -2879,7 +2988,7 @@ async def logout_user(
     db: Session = Depends(get_db),
 ):
     # Try to get token from cookie first, then from Authorization header
-    token = request.cookies.get("auth_token")
+    token = request.cookies.get(AUTH_COOKIE_NAME)
     if not token and authorization:
         try:
             token = extract_bearer_token(authorization)
@@ -2896,7 +3005,7 @@ async def logout_user(
     # Create response and clear the cookie
     from fastapi.responses import JSONResponse
     response = JSONResponse(content={"success": True, "message": "Logged out successfully"})
-    response.delete_cookie(key="auth_token", path="/")
+    clear_auth_cookie(response, request)
     
     return response
 
@@ -3042,7 +3151,12 @@ async def get_connection_status(
             "supports_query": False,
         }
     try:
-        validate_source_connection(session["db_uri"], session["db_type"], session["db_name"])
+        await run_in_threadpool(
+            validate_source_connection,
+            session["db_uri"],
+            session["db_type"],
+            session["db_name"],
+        )
         return {
             "success": True,
             "connected": True,
@@ -3072,9 +3186,14 @@ async def get_table_schema(
     try:
         source_type = normalize_source_type(db_session["db_type"])
         if source_type in SQL_SOURCE_TYPES:
-            columns = get_sql_table_schema(db_session["db_uri"], table_name)
+            columns = await run_in_threadpool(get_sql_table_schema, db_session["db_uri"], table_name)
         elif source_type == "mongodb":
-            columns = get_mongodb_table_schema(db_session["db_uri"], db_session["db_name"], table_name)
+            columns = await run_in_threadpool(
+                get_mongodb_table_schema,
+                db_session["db_uri"],
+                db_session["db_name"],
+                table_name,
+            )
         elif source_type == "redis":
             columns = get_redis_table_schema()
         else:
@@ -3089,11 +3208,15 @@ async def get_database_tables(db_session: Dict[str, Any] = Depends(get_db_sessio
     try:
         source_type = normalize_source_type(db_session["db_type"])
         if source_type in SQL_SOURCE_TYPES:
-            tables_info = get_sql_tables_info(db_session["db_uri"])
+            tables_info = await run_in_threadpool(get_sql_tables_info, db_session["db_uri"])
         elif source_type == "mongodb":
-            tables_info = get_mongodb_tables_info(db_session["db_uri"], db_session["db_name"])
+            tables_info = await run_in_threadpool(
+                get_mongodb_tables_info,
+                db_session["db_uri"],
+                db_session["db_name"],
+            )
         elif source_type == "redis":
-            tables_info = get_redis_tables_info(db_session["db_uri"])
+            tables_info = await run_in_threadpool(get_redis_tables_info, db_session["db_uri"])
         else:
             raise ValueError(f"Unsupported source type: {source_type}")
         return {"success": True, "tables": tables_info, "total": len(tables_info)}
@@ -3211,16 +3334,29 @@ async def get_chat_sessions(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    sessions = db.query(ChatSession).filter(ChatSession.user_id == current_user.id).all()
-    result = []
-    for session in sessions:
-        result.append({
-            "id": session.id,
-            "title": session.title,
-            "messages": json.loads(str(session.messages)),
-            "timestamp": datetime.utcnow().isoformat(),
-        })
-    return result
+    sessions = (
+        db.query(ChatSession)
+        .filter(ChatSession.user_id == current_user.id)
+        .order_by(ChatSession.id.desc())
+        .all()
+    )
+    return [serialize_chat_session(session, include_messages=False) for session in sessions]
+
+
+@app.get("/api/chat-sessions/{session_id}")
+async def get_chat_session(
+    session_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    session = (
+        db.query(ChatSession)
+        .filter(ChatSession.id == session_id, ChatSession.user_id == current_user.id)
+        .first()
+    )
+    if not session:
+        raise HTTPException(status_code=404, detail="Chat session not found")
+    return serialize_chat_session(session)
 
 
 @app.post("/api/chat-sessions")
@@ -3239,12 +3375,7 @@ async def create_chat_session(
         db.add(new_session)
         db.commit()
         db.refresh(new_session)
-        return {
-            "id": new_session.id,
-            "title": new_session.title,
-            "messages": json.loads(str(new_session.messages)),
-            "timestamp": datetime.utcnow().isoformat(),
-        }
+        return serialize_chat_session(new_session)
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=f"Failed to create chat session: {str(e)}")
@@ -3269,12 +3400,7 @@ async def update_chat_session(
         if session.messages is not None:
             setattr(existing_session, 'messages', json.dumps(session.messages))
         db.commit()
-        return {
-            "id": existing_session.id,
-            "title": existing_session.title,
-            "messages": json.loads(str(existing_session.messages)),
-            "timestamp": datetime.utcnow().isoformat(),
-        }
+        return serialize_chat_session(existing_session)
     except HTTPException:
         raise
     except Exception as e:
