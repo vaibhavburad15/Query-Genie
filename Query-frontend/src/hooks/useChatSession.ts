@@ -1,17 +1,30 @@
-import { useState, useEffect } from 'react';
-import { getChatSessions, createChatSession, updateChatSession, deleteChatSession, deleteAllChatSessions } from '@/services/api';
+import { useState, useEffect, useRef } from 'react';
+import {
+  getChatSessions,
+  getChatSession,
+  createChatSession,
+  updateChatSession,
+  deleteChatSession,
+  deleteAllChatSessions,
+} from '@/services/api';
 import { ChatMessage } from '@/components/dashboard/ChatInput';
 import { useAuth } from '@/contexts/AuthContext';
 
 export function useChatSession() {
-  const { user, justLoggedIn, resetJustLoggedIn } = useAuth();
+  const { user } = useAuth();
   const [chatSessions, setChatSessions] = useState<any[]>([]);
   const [currentChatId, setCurrentChatId] = useState<number | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const skipPersistForMessagesRef = useRef<ChatMessage[] | null>(null);
+  const selectedChatRequestRef = useRef(0);
 
   useEffect(() => {
     if (user) {
       loadChatSessions();
+    } else {
+      setChatSessions([]);
+      setCurrentChatId(null);
+      setMessages([]);
     }
   }, [user]);
 
@@ -19,15 +32,24 @@ export function useChatSession() {
 
   useEffect(() => {
     if (currentChatId !== null) {
+      if (skipPersistForMessagesRef.current === messages) {
+        skipPersistForMessagesRef.current = null;
+        return;
+      }
+      skipPersistForMessagesRef.current = null;
       persistMessages();
     }
   }, [messages]);
+
+  const setMessagesWithoutPersist = (nextMessages: ChatMessage[]) => {
+    skipPersistForMessagesRef.current = nextMessages;
+    setMessages(nextMessages);
+  };
 
   const loadChatSessions = async () => {
     if (!user) return;
     try {
       const sessions = await getChatSessions();
-      console.log("Loaded chat sessions:", sessions);
       setChatSessions(sessions);
       // Do not automatically select the first chat session
       // Users will need to connect to database first to create a new chat
@@ -42,17 +64,43 @@ export function useChatSession() {
       const newSession = await createChatSession({ title: "New Chat", messages: [] });
       setChatSessions(prev => [newSession, ...prev]);
       setCurrentChatId(newSession.id);
-      setMessages([]);
+      setMessagesWithoutPersist([]);
     } catch (error) {
       console.error("Error creating new chat session", error);
     }
   };
 
-  const selectChat = (chatId: number) => {
+  const selectChat = async (chatId: number) => {
     const selectedSession = chatSessions.find(session => session.id === chatId);
-    if (selectedSession) {
-      setCurrentChatId(chatId);
-      setMessages(selectedSession.messages);
+    if (!selectedSession) return;
+
+    const requestId = selectedChatRequestRef.current + 1;
+    selectedChatRequestRef.current = requestId;
+    setCurrentChatId(chatId);
+
+    if (Array.isArray(selectedSession.messages)) {
+      setMessagesWithoutPersist(selectedSession.messages);
+      return;
+    }
+
+    setMessagesWithoutPersist([]);
+
+    try {
+      const hydratedSession = await getChatSession(chatId);
+      if (selectedChatRequestRef.current !== requestId) return;
+
+      const hydratedMessages = Array.isArray(hydratedSession.messages)
+        ? hydratedSession.messages
+        : [];
+
+      setChatSessions(prev =>
+        prev.map(session =>
+          session.id === chatId ? { ...session, ...hydratedSession, messages: hydratedMessages } : session
+        )
+      );
+      setMessagesWithoutPersist(hydratedMessages);
+    } catch (error) {
+      console.error("Error loading chat session", error);
     }
   };
 
@@ -78,11 +126,10 @@ export function useChatSession() {
       if (currentChatId === chatId) {
         const remaining = chatSessions.filter(session => session.id !== chatId);
         if (remaining.length > 0) {
-          setCurrentChatId(remaining[0].id);
-          setMessages(remaining[0].messages);
+          await selectChat(remaining[0].id);
         } else {
           setCurrentChatId(null);
-          setMessages([]);
+          setMessagesWithoutPersist([]);
         }
       }
     } catch (error) {
