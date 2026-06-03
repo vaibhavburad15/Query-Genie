@@ -228,9 +228,9 @@ const Index = () => {
             <div className="grid items-center gap-12 lg:grid-cols-12">
               <div className="lg:col-span-6">
                 <h1 className="landing-grad-text text-[44px] font-extrabold leading-[1.02] tracking-tight sm:text-6xl lg:text-7xl">
-                  Talk to your database.
+                  Talk to your database
                   <br />
-                  <span className="landing-grad-text-2">Get dashboards.</span>
+                  <span className="landing-grad-text-2">Get dashboards</span>
                 </h1>
                 <p className="mt-7 max-w-xl text-lg leading-relaxed text-[var(--landing-soft)]">
                   Query Genie connects to your databases and uploaded spreadsheets, converts natural
@@ -296,7 +296,7 @@ const Index = () => {
                         YOU
                       </div>
                       <div className="rounded-xl border border-[var(--landing-line)] bg-[var(--landing-card)] px-4 py-2.5 text-sm text-[var(--landing-ink)]">
-                        Top 5 products by revenue last quarter, with month-over-month growth.
+                        Top 5 products by revenue last quarter, with month-over-month growth
                       </div>
                     </div>
 
@@ -415,10 +415,10 @@ const Index = () => {
                 Workflow
               </div>
               <h2 className="landing-grad-text text-4xl font-extrabold tracking-tight sm:text-5xl">
-                From connection to reusable insight.
+                From connection to reusable insight
               </h2>
               <p className="mt-4 text-lg text-[var(--landing-muted)]">
-                Three steps. No query language required.
+                Three steps. No query language required
               </p>
             </div>
 
@@ -455,10 +455,10 @@ const Index = () => {
                 Sources
               </div>
               <h2 className="landing-grad-text text-4xl font-extrabold leading-tight tracking-tight sm:text-5xl">
-                Honest support matrix.
+                Databases We Work With
               </h2>
               <p className="mt-4 leading-relaxed text-[var(--landing-muted)]">
-                Direct from the codebase. SQL databases and staged files support full natural-language
+                Direct from the codebase. Query databases and staged files support full natural-language
                 querying. MongoDB and Redis are currently available for metadata browsing.
               </p>
               <div className="mt-6 flex items-center gap-3 text-xs text-[var(--landing-muted)]">
@@ -491,7 +491,7 @@ const Index = () => {
                 Features
               </div>
               <h2 className="landing-grad-text text-4xl font-extrabold tracking-tight sm:text-5xl">
-                Built around the working dashboard.
+                Built around the working dashboard
               </h2>
               <p className="mt-4 text-lg text-[var(--landing-muted)]">
                 Everything you need to go from question to dashboard.
@@ -658,9 +658,9 @@ const Index = () => {
               Ready when you are
             </div>
             <h2 className="landing-grad-text text-4xl font-extrabold leading-[1.05] tracking-tight sm:text-6xl">
-              Stop writing queries.
+              Stop writing queries
               <br />
-              Start asking questions.
+              Start asking questions
             </h2>
             <p className="mx-auto mt-6 max-w-xl text-lg text-[var(--landing-muted)]">
               Connect a source in 60 seconds. Save your first dashboard today.
@@ -709,8 +709,7 @@ const Index = () => {
             title="Resources"
             links={[
               ['Documentation', '#'],
-              ['API reference', '#'],
-              ['README', '#'],
+
               ['GitHub', 'https://github.com/vaibhavburad15/Query-Genie'],
             ]}
           />
@@ -737,17 +736,7 @@ const Index = () => {
         <div className="border-t border-[var(--landing-line)]">
           <div className="mx-auto flex max-w-7xl flex-col items-center justify-between gap-3 px-6 py-5 text-xs text-[var(--landing-muted)] sm:flex-row lg:px-10">
             <span>@ 2026 Query Genie. All rights reserved.</span>
-            <div className="flex gap-5">
-              <a className="hover:text-[var(--landing-ink)]" href="#">
-                Privacy
-              </a>
-              <a className="hover:text-[var(--landing-ink)]" href="#">
-                Terms
-              </a>
-              <a className="hover:text-[var(--landing-ink)]" href="#">
-                Security
-              </a>
-            </div>
+           
           </div>
         </div>
       </footer>
