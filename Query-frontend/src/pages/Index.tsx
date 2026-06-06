@@ -137,7 +137,7 @@ const creatorProfile = {
   aboutText:
     'AI & Backend Developer | DevOps & Cloud Engineer | GenAI & Agentic AI Builder ',
   aboutText2:
-    'Passionate AI & Backend Developer with experience in GenAI, cloud technologies, and scalable application development. Creator of Query Genie, an AI-powered database assistant focused on simplifying data interaction using natural language. Skilled AI, Backend, DevOps, GenAI, Agentic AI.',
+    'Passionate AI & Backend Developer with experience in GenAI, cloud technologies, and scalable application development. Creator of Query Genie, an AI-powered database assistant focused on simplifying data interaction using natural language. Skilled in AI, Backend, DevOps, GenAI, Agentic AI.',
   
 };
 
@@ -220,54 +220,54 @@ const Index = () => {
       </header>
 
       <main>
-        <section className="relative overflow-hidden pb-24 pt-36">
+        <section className="relative overflow-hidden pb-16 pt-28 sm:pb-24 sm:pt-36">
           <div className="landing-grid-bg absolute inset-0 opacity-80" />
           <div className="landing-radial absolute inset-0" />
 
-          <div className="relative mx-auto max-w-7xl px-6 lg:px-10">
-            <div className="grid items-center gap-12 lg:grid-cols-12">
+          <div className="relative mx-auto max-w-7xl px-4 sm:px-6 lg:px-10">
+            <div className="grid items-center gap-8 sm:gap-12 lg:grid-cols-12">
               <div className="lg:col-span-6">
-                <h1 className="landing-grad-text text-[44px] font-extrabold leading-[1.02] tracking-tight sm:text-6xl lg:text-7xl">
+                <h1 className="landing-grad-text text-[32px] font-extrabold leading-[1.1] tracking-tight sm:text-[44px] sm:leading-[1.02] md:text-5xl lg:text-7xl">
                   Talk to your database
                   <br />
                   <span className="landing-grad-text-2">Get dashboards</span>
                 </h1>
-                <p className="mt-7 max-w-xl text-lg leading-relaxed text-[var(--landing-soft)]">
+                <p className="mt-5 max-w-xl text-base leading-relaxed text-[var(--landing-soft)] sm:mt-7 sm:text-lg">
                   Query Genie connects to your databases and uploaded spreadsheets, converts natural
                   language into database-specific queries, and presents results as tables, charts, favorites,
                   history, and custom dashboards.
                 </p>
 
-                <div className="mt-9 flex flex-wrap gap-3">
-                  <Button onClick={goToAuth} className="landing-btn-primary h-12 rounded-xl px-5">
+                <div className="mt-6 flex flex-wrap gap-3 sm:mt-9">
+                  <Button onClick={goToAuth} className="landing-btn-primary h-11 rounded-xl px-4 text-sm sm:h-12 sm:px-5 sm:text-base">
                     Start querying free
                     <ArrowRight className="ml-2 h-4 w-4" />
                   </Button>
                   <Button
                     variant="outline"
                     onClick={() => document.getElementById('workflow')?.scrollIntoView({ behavior: 'smooth' })}
-                    className="landing-btn-ghost h-12 rounded-xl px-5"
+                    className="landing-btn-ghost h-11 rounded-xl px-4 text-sm sm:h-12 sm:px-5 sm:text-base"
                   >
                     <Play className="mr-2 h-4 w-4" />
                     See workflow
                   </Button>
                 </div>
 
-                <div className="mt-10 grid max-w-lg grid-cols-1 gap-3 sm:grid-cols-3">
-                  <div className="landing-card p-4">
-                    <Sparkles className="h-5 w-5 text-violet-300" />
-                    <p className="mt-2 text-xs font-medium text-[var(--landing-soft)]">LLM routing</p>
-                    <p className="mt-0.5 text-[11px] text-[var(--landing-muted)]">Ollama + Groq</p>
+                <div className="mt-6 grid max-w-lg grid-cols-1 gap-2.5 sm:mt-10 sm:grid-cols-3 sm:gap-3">
+                  <div className="landing-card p-3.5 sm:p-4">
+                    <Sparkles className="h-4 w-4 text-violet-300 sm:h-5 sm:w-5" />
+                    <p className="mt-2 text-[11px] font-medium text-[var(--landing-soft)] sm:text-xs">LLM routing</p>
+                    <p className="mt-0.5 text-[10px] text-[var(--landing-muted)] sm:text-[11px]">Ollama + Groq</p>
                   </div>
-                  <div className="landing-card p-4">
-                    <ShieldCheck className="h-5 w-5 text-emerald-300" />
-                    <p className="mt-2 text-xs font-medium text-[var(--landing-soft)]">Safe execution</p>
-                    <p className="mt-0.5 text-[11px] text-[var(--landing-muted)]">Through backend</p>
+                  <div className="landing-card p-3.5 sm:p-4">
+                    <ShieldCheck className="h-4 w-4 text-emerald-300 sm:h-5 sm:w-5" />
+                    <p className="mt-2 text-[11px] font-medium text-[var(--landing-soft)] sm:text-xs">Safe execution</p>
+                    <p className="mt-0.5 text-[10px] text-[var(--landing-muted)] sm:text-[11px]">Through backend</p>
                   </div>
-                  <div className="landing-card p-4">
-                    <Zap className="h-5 w-5 text-amber-300" />
-                    <p className="mt-2 text-xs font-medium text-[var(--landing-soft)]">Conformation </p>
-                    <p className="mt-0.5 text-[11px] text-[var(--landing-muted)]">Ask before execute</p>
+                  <div className="landing-card p-3.5 sm:p-4">
+                    <Zap className="h-4 w-4 text-amber-300 sm:h-5 sm:w-5" />
+                    <p className="mt-2 text-[11px] font-medium text-[var(--landing-soft)] sm:text-xs">Conformation </p>
+                    <p className="mt-0.5 text-[10px] text-[var(--landing-muted)] sm:text-[11px]">Ask before execute</p>
                   </div>
                 </div>
               </div>
@@ -275,40 +275,40 @@ const Index = () => {
               <div className="relative lg:col-span-6">
                 <div className="landing-preview-glow absolute -inset-5 rounded-3xl" />
                 <div className="landing-code-window relative overflow-hidden">
-                  <div className="flex items-center justify-between border-b border-[var(--landing-line)] px-4 py-3">
+                  <div className="flex items-center justify-between border-b border-[var(--landing-line)] px-3 py-2.5 sm:px-4 sm:py-3">
                     <div className="flex gap-1.5">
-                      <span className="h-[11px] w-[11px] rounded-full bg-[#ff5f56]" />
-                      <span className="h-[11px] w-[11px] rounded-full bg-[#ffbd2e]" />
-                      <span className="h-[11px] w-[11px] rounded-full bg-[#27c93f]" />
+                      <span className="h-[10px] w-[10px] rounded-full bg-[#ff5f56] sm:h-[11px] sm:w-[11px]" />
+                      <span className="h-[10px] w-[10px] rounded-full bg-[#ffbd2e] sm:h-[11px] sm:w-[11px]" />
+                      <span className="h-[10px] w-[10px] rounded-full bg-[#27c93f] sm:h-[11px] sm:w-[11px]" />
                     </div>
-                    <span className="font-mono text-[11px] text-[var(--landing-muted)]">
+                    <span className="font-mono text-[10px] text-[var(--landing-muted)] sm:text-[11px]">
                       querygenie - chat
                     </span>
-                    <span className="landing-chip py-1 text-[10px]">
-                      <Database className="h-3 w-3" />
+                    <span className="landing-chip py-0.5 text-[9px] sm:py-1 sm:text-[10px]">
+                      <Database className="h-2.5 w-2.5 sm:h-3 sm:w-3" />
                       sales_db
                     </span>
                   </div>
 
-                  <div className="space-y-4 p-5">
-                    <div className="flex items-start gap-3">
-                      <div className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-gradient-to-br from-pink-400 to-violet-500 text-[10px] font-bold text-white">
+                  <div className="space-y-3 p-3 sm:space-y-4 sm:p-5">
+                    <div className="flex items-start gap-2 sm:gap-3">
+                      <div className="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-gradient-to-br from-pink-400 to-violet-500 text-[9px] font-bold text-white sm:h-7 sm:w-7 sm:text-[10px]">
                         YOU
                       </div>
-                      <div className="rounded-xl border border-[var(--landing-line)] bg-[var(--landing-card)] px-4 py-2.5 text-sm text-[var(--landing-ink)]">
+                      <div className="rounded-xl border border-[var(--landing-line)] bg-[var(--landing-card)] px-3 py-2 text-xs text-[var(--landing-ink)] sm:px-4 sm:py-2.5 sm:text-sm">
                         Top 5 products by revenue last quarter, with month-over-month growth
                       </div>
                     </div>
 
-                    <div className="flex items-start gap-3">
-                      <div className="grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-gradient-to-br from-violet-500 to-cyan-400">
-                        <Sparkles className="h-3.5 w-3.5 text-white" />
+                    <div className="flex items-start gap-2 sm:gap-3">
+                      <div className="grid h-6 w-6 shrink-0 place-items-center rounded-lg bg-gradient-to-br from-violet-500 to-cyan-400 sm:h-7 sm:w-7">
+                        <Sparkles className="h-3 w-3 text-white sm:h-3.5 sm:w-3.5" />
                       </div>
                       <div className="min-w-0 flex-1">
-                        <div className="mb-2 font-mono text-[11px] text-[var(--landing-muted)]">
+                        <div className="mb-1.5 font-mono text-[10px] text-[var(--landing-muted)] sm:mb-2 sm:text-[11px]">
                           Generated Query - validated read-only
                         </div>
-                        <pre className="overflow-x-auto rounded-xl border border-[var(--landing-line)] bg-[var(--landing-code)] p-4 font-mono text-[12px] leading-6 text-[var(--landing-code-ink)]">
+                        <pre className="overflow-x-auto rounded-xl border border-[var(--landing-line)] bg-[var(--landing-code)] p-3 font-mono text-[10px] leading-5 text-[var(--landing-code-ink)] sm:p-4 sm:text-[12px] sm:leading-6">
                           <code>
                             <span className="text-pink-400">SELECT</span> p.name,{'\n'}
                             {'       '}<span className="text-pink-400">SUM</span>(o.amount){' '}
@@ -330,23 +330,23 @@ const Index = () => {
                           </code>
                         </pre>
 
-                        <div className="mt-4 rounded-xl border border-[var(--landing-line)] bg-[var(--landing-code)] p-4">
-                          <div className="mb-3 flex items-center justify-between gap-3">
-                            <span className="text-xs font-medium text-[var(--landing-soft)]">
+                        <div className="mt-3 rounded-xl border border-[var(--landing-line)] bg-[var(--landing-code)] p-3 sm:mt-4 sm:p-4">
+                          <div className="mb-2.5 flex items-center justify-between gap-2 sm:mb-3 sm:gap-3">
+                            <span className="text-[11px] font-medium text-[var(--landing-soft)] sm:text-xs">
                               Revenue - Q1 2026
                             </span>
-                            <div className="flex gap-1.5">
-                              <span className="landing-chip py-0.5 text-[10px]">
-                                <BarChart3 className="h-3 w-3" />
+                            <div className="flex gap-1 sm:gap-1.5">
+                              <span className="landing-chip py-0.5 text-[9px] sm:text-[10px]">
+                                <BarChart3 className="h-2.5 w-2.5 sm:h-3 sm:w-3" />
                                 Bar
                               </span>
-                              <span className="landing-chip py-0.5 text-[10px]">
-                                <Download className="h-3 w-3" />
+                              <span className="landing-chip py-0.5 text-[9px] sm:text-[10px]">
+                                <Download className="h-2.5 w-2.5 sm:h-3 sm:w-3" />
                                 CSV
                               </span>
                             </div>
                           </div>
-                          <div className="flex h-24 items-end gap-2">
+                          <div className="flex h-20 items-end gap-1.5 sm:h-24 sm:gap-2">
                             {[90, 72, 60, 48, 38].map((height, index) => (
                               <div
                                 key={height}
@@ -359,7 +359,7 @@ const Index = () => {
                               />
                             ))}
                           </div>
-                          <div className="mt-2 grid grid-cols-5 text-center font-mono text-[10px] text-[var(--landing-muted)]">
+                          <div className="mt-1.5 grid grid-cols-5 text-center font-mono text-[9px] text-[var(--landing-muted)] sm:mt-2 sm:text-[10px]">
                             <span>Alpha</span>
                             <span>Beta</span>
                             <span>Gamma</span>
