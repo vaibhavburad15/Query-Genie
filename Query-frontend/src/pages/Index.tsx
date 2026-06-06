@@ -137,7 +137,7 @@ const creatorProfile = {
   aboutText:
     'AI & Backend Developer | DevOps & Cloud Engineer | GenAI & Agentic AI Builder ',
   aboutText2:
-    'Passionate AI & Backend Developer with experience in GenAI, cloud technologies, and scalable application development. Creator of Query Genie, an AI-powered database assistant focused on simplifying data interaction using natural language. Skilled in Python, FastAPI, AWS, and automation workflows, with growing expertise in DevOps and Agentic AI systems.',
+    'Passionate AI & Backend Developer with experience in GenAI, cloud technologies, and scalable application development. Creator of Query Genie, an AI-powered database assistant focused on simplifying data interaction using natural language. Skilled AI, Backend, DevOps, GenAI, Agentic AI.',
   
 };
 
@@ -629,7 +629,7 @@ const Index = () => {
                 </div>
                 <div className="relative">
                   <div className="absolute -inset-4 rounded-2xl bg-gradient-to-br from-violet-500/20 to-cyan-500/20 blur-2xl" />
-                  <div className="relative overflow-hidden rounded-2xl border border-[var(--landing-line)] bg-gradient-to-br from-[var(--landing-code)] to-[var(--landing-card)] p-8 shadow-2xl">
+                  <div className="relative overflow-hidden rounded-2xl border border-[var(--landing-line)] bg-[var(--landing-band)] p-8 shadow-2xl">
                     <div className="mb-4 flex items-center gap-3">
                       <div className="grid h-14 w-14 place-items-center rounded-xl bg-gradient-to-br from-violet-500 to-violet-600">
                         <FileText className="h-7 w-7 text-white" />
@@ -642,8 +642,8 @@ const Index = () => {
                     <div className="space-y-2 text-sm text-[var(--landing-muted)]">
                       <div className="flex items-center justify-between rounded-lg border border-[var(--landing-line)] bg-[var(--landing-card)] px-3 py-2">
                         <span className="flex items-center gap-2">
-                          <Database className="h-4 w-4 text-violet-400" />
-                          Database Setup
+                          <ShieldCheck className="h-4 w-4 text-emerald-400" />
+                          Database Security
                         </span>
                         <Check className="h-4 w-4 text-emerald-400" />
                       </div>
@@ -656,8 +656,8 @@ const Index = () => {
                       </div>
                       <div className="flex items-center justify-between rounded-lg border border-[var(--landing-line)] bg-[var(--landing-card)] px-3 py-2">
                         <span className="flex items-center gap-2">
-                          <Terminal className="h-4 w-4 text-pink-400" />
-                          API Reference
+                          <Play className="h-4 w-4 text-violet-400" />
+                          How to Use
                         </span>
                         <Check className="h-4 w-4 text-emerald-400" />
                       </div>
@@ -667,16 +667,6 @@ const Index = () => {
                           Best Practices
                         </span>
                         <Check className="h-4 w-4 text-emerald-400" />
-                      </div>
-                    </div>
-                    <div className="mt-6 rounded-lg border border-[var(--landing-line)] bg-[var(--landing-card)] p-3">
-                      <div className="flex items-center justify-between text-xs">
-                        <span className="text-[var(--landing-muted)]">Format</span>
-                        <span className="font-mono font-semibold text-[var(--landing-ink)]">PDF</span>
-                      </div>
-                      <div className="mt-2 flex items-center justify-between text-xs">
-                        <span className="text-[var(--landing-muted)]">File Size</span>
-                        <span className="font-mono font-semibold text-[var(--landing-ink)]">~600 KB</span>
                       </div>
                     </div>
                   </div>
