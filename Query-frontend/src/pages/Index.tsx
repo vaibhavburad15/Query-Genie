@@ -576,6 +576,116 @@ const Index = () => {
           </div>
         </section>
 
+        <section className="landing-section relative bg-[var(--landing-band)]">
+          <div className="landing-radial absolute inset-0 opacity-40" />
+          <div className="relative mx-auto max-w-7xl px-6 lg:px-10">
+            <div className="landing-card overflow-hidden">
+              <div className="grid items-center gap-8 p-8 md:grid-cols-2 lg:gap-12 lg:p-12">
+                <div>
+                  <div className="landing-chip mb-5">
+                    <FileText className="h-3.5 w-3.5" />
+                    Documentation
+                  </div>
+                  <h2 className="landing-grad-text text-3xl font-extrabold tracking-tight sm:text-4xl lg:text-5xl">
+                    Complete Documentation
+                  </h2>
+                  <p className="mt-5 text-base leading-relaxed text-[var(--landing-soft)] lg:text-lg">
+                    Download the comprehensive Query Genie documentation guide. Learn about all features, setup instructions, database connections, and best practices in one complete PDF document.
+                  </p>
+                  <ul className="mt-6 space-y-3">
+                    <li className="flex items-start gap-3 text-sm text-[var(--landing-muted)]">
+                      <CheckCircle2 className="h-5 w-5 shrink-0 text-emerald-400" />
+                      <span>Step-by-step setup and installation guide</span>
+                    </li>
+                    <li className="flex items-start gap-3 text-sm text-[var(--landing-muted)]">
+                      <CheckCircle2 className="h-5 w-5 shrink-0 text-emerald-400" />
+                      <span>Database connection configurations</span>
+                    </li>
+                    <li className="flex items-start gap-3 text-sm text-[var(--landing-muted)]">
+                      <CheckCircle2 className="h-5 w-5 shrink-0 text-emerald-400" />
+                      <span>Feature explanations and usage examples</span>
+                    </li>
+                    <li className="flex items-start gap-3 text-sm text-[var(--landing-muted)]">
+                      <CheckCircle2 className="h-5 w-5 shrink-0 text-emerald-400" />
+                      <span>Troubleshooting and FAQ section</span>
+                    </li>
+                  </ul>
+                  <div className="mt-8">
+                    <Button
+                      onClick={() => {
+                        const link = document.createElement('a');
+                        link.href = '/Query-genie-document.pdf';
+                        link.download = 'Query-Genie-Documentation.pdf';
+                        document.body.appendChild(link);
+                        link.click();
+                        document.body.removeChild(link);
+                      }}
+                      className="landing-btn-primary h-12 rounded-xl px-6 text-base"
+                    >
+                      <Download className="mr-2 h-5 w-5" />
+                      Download Documentation
+                    </Button>
+                  </div>
+                </div>
+                <div className="relative">
+                  <div className="absolute -inset-4 rounded-2xl bg-gradient-to-br from-violet-500/20 to-cyan-500/20 blur-2xl" />
+                  <div className="relative overflow-hidden rounded-2xl border border-[var(--landing-line)] bg-gradient-to-br from-[var(--landing-code)] to-[var(--landing-card)] p-8 shadow-2xl">
+                    <div className="mb-4 flex items-center gap-3">
+                      <div className="grid h-14 w-14 place-items-center rounded-xl bg-gradient-to-br from-violet-500 to-violet-600">
+                        <FileText className="h-7 w-7 text-white" />
+                      </div>
+                      <div>
+                        <h3 className="font-bold text-[var(--landing-ink)]">Query Genie</h3>
+                        <p className="text-sm text-[var(--landing-muted)]">Documentation Guide</p>
+                      </div>
+                    </div>
+                    <div className="space-y-2 text-sm text-[var(--landing-muted)]">
+                      <div className="flex items-center justify-between rounded-lg border border-[var(--landing-line)] bg-[var(--landing-card)] px-3 py-2">
+                        <span className="flex items-center gap-2">
+                          <Database className="h-4 w-4 text-violet-400" />
+                          Database Setup
+                        </span>
+                        <Check className="h-4 w-4 text-emerald-400" />
+                      </div>
+                      <div className="flex items-center justify-between rounded-lg border border-[var(--landing-line)] bg-[var(--landing-card)] px-3 py-2">
+                        <span className="flex items-center gap-2">
+                          <Sparkles className="h-4 w-4 text-cyan-400" />
+                          Features Guide
+                        </span>
+                        <Check className="h-4 w-4 text-emerald-400" />
+                      </div>
+                      <div className="flex items-center justify-between rounded-lg border border-[var(--landing-line)] bg-[var(--landing-card)] px-3 py-2">
+                        <span className="flex items-center gap-2">
+                          <Terminal className="h-4 w-4 text-pink-400" />
+                          API Reference
+                        </span>
+                        <Check className="h-4 w-4 text-emerald-400" />
+                      </div>
+                      <div className="flex items-center justify-between rounded-lg border border-[var(--landing-line)] bg-[var(--landing-card)] px-3 py-2">
+                        <span className="flex items-center gap-2">
+                          <KeyRound className="h-4 w-4 text-amber-400" />
+                          Best Practices
+                        </span>
+                        <Check className="h-4 w-4 text-emerald-400" />
+                      </div>
+                    </div>
+                    <div className="mt-6 rounded-lg border border-[var(--landing-line)] bg-[var(--landing-card)] p-3">
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="text-[var(--landing-muted)]">Format</span>
+                        <span className="font-mono font-semibold text-[var(--landing-ink)]">PDF</span>
+                      </div>
+                      <div className="mt-2 flex items-center justify-between text-xs">
+                        <span className="text-[var(--landing-muted)]">File Size</span>
+                        <span className="font-mono font-semibold text-[var(--landing-ink)]">~600 KB</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
         <section id="team" className="landing-section relative bg-[var(--landing-band)]">
           <div className="landing-radial absolute inset-0 opacity-50" />
           <div className="relative mx-auto max-w-7xl px-6 lg:px-10">
