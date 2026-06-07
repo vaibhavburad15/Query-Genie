@@ -2842,6 +2842,14 @@ def run_chat_query(
 
 
 # ─────────────────────────────────────────────
+# HEALTH CHECK ENDPOINT
+# ─────────────────────────────────────────────
+@app.get("/health")
+async def health_check():
+    """Health check endpoint for monitoring and startup verification"""
+    return {"status": "healthy", "service": "Query Genie Backend", "version": "1.0.0"}
+
+# ─────────────────────────────────────────────
 # AUTH ENDPOINTS
 # ─────────────────────────────────────────────
 @app.post("/api/send-otp")

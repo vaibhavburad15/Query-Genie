@@ -385,7 +385,42 @@ const Index = () => {
           </div>
         </section>
 
-        <section className="border-y border-[var(--landing-line)] bg-[var(--landing-band)]">
+        <section className="border-y border-[var(--landing-line)] bg-gradient-to-r from-violet-500/10 via-cyan-500/10 to-violet-500/10">
+          <div className="mx-auto max-w-7xl px-6 py-8 lg:px-10">
+            <div className="flex flex-col items-center justify-between gap-4 md:flex-row md:gap-6">
+              <div className="flex items-center gap-4">
+                <div className="grid h-12 w-12 shrink-0 place-items-center rounded-xl bg-gradient-to-br from-violet-500 to-cyan-400">
+                  <Download className="h-6 w-6 text-white" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-bold text-[var(--landing-ink)]">
+                    Want to connect to local databases?
+                  </h3>
+                  <p className="text-sm text-[var(--landing-muted)]">
+                    Download our desktop app for full local database access
+                  </p>
+                </div>
+              </div>
+              <Button
+                onClick={() => {
+                  // For now, this alerts users. You can replace with actual download link
+                  const link = document.createElement('a');
+                  link.href = '/Query-Genie-Setup.exe'; // You'll need to place the installer here
+                  link.download = 'Query-Genie-Setup-1.0.0.exe';
+                  document.body.appendChild(link);
+                  link.click();
+                  document.body.removeChild(link);
+                }}
+                className="landing-btn-primary h-11 whitespace-nowrap rounded-xl px-6 text-sm"
+              >
+                <Download className="mr-2 h-4 w-4" />
+                Download Desktop App
+              </Button>
+            </div>
+          </div>
+        </section>
+
+        <section className="border-b border-[var(--landing-line)] bg-[var(--landing-band)]">
           <div className="mx-auto max-w-7xl px-6 py-10 lg:px-10">
             <p className="mb-6 text-center text-xs uppercase tracking-[0.25em] text-[var(--landing-muted)]">
               Works with the databases and files you already use
@@ -569,6 +604,58 @@ const Index = () => {
                 <p className="text-sm text-[var(--landing-muted)]">
                   Create personalized dashboards with multiple chart types and drag-and-drop layouts.
                 </p>
+              </div>
+
+              <div className="landing-card landing-bento-card bg-gradient-to-br from-violet-500/5 to-cyan-500/5 p-7 md:col-span-6">
+                <div className="flex items-start justify-between gap-6">
+                  <div>
+                    <div className="mb-4 flex items-center gap-3">
+                      <div className="grid h-10 w-10 place-items-center rounded-lg bg-gradient-to-br from-violet-500 to-cyan-400">
+                        <Download className="h-5 w-5 text-white" />
+                      </div>
+                      <span className="landing-chip py-1.5 text-[11px]">
+                        <span className="landing-pulse-dot h-2 w-2 rounded-full bg-emerald-400" />
+                        Desktop App Available
+                      </span>
+                    </div>
+                    <h3 className="mb-2 text-xl font-bold">Local Database Access</h3>
+                    <p className="max-w-2xl text-sm text-[var(--landing-muted)]">
+                      Need to connect to databases running on your local machine (localhost)? Download our desktop application 
+                      for full access to MySQL, PostgreSQL, SQL Server, and other databases on your computer. 
+                      Perfect for developers working with local development environments.
+                    </p>
+                    <div className="mt-4 flex flex-wrap gap-2">
+                      <span className="landing-chip text-[10px]">
+                        <Database className="h-2.5 w-2.5" />
+                        Localhost Support
+                      </span>
+                      <span className="landing-chip text-[10px]">
+                        <ShieldCheck className="h-2.5 w-2.5" />
+                        Secure
+                      </span>
+                      <span className="landing-chip text-[10px]">
+                        <Zap className="h-2.5 w-2.5" />
+                        Fast
+                      </span>
+                    </div>
+                  </div>
+                  <div className="hidden md:block">
+                    <Button
+                      onClick={() => {
+                        const link = document.createElement('a');
+                        link.href = '/Query-Genie-Setup.exe';
+                        link.download = 'Query-Genie-Setup-1.0.0.exe';
+                        document.body.appendChild(link);
+                        link.click();
+                        document.body.removeChild(link);
+                      }}
+                      className="landing-btn-primary h-11 whitespace-nowrap rounded-xl px-6 text-sm"
+                    >
+                      <Download className="mr-2 h-4 w-4" />
+                      Download Now
+                    </Button>
+                  </div>
+                </div>
               </div>
 
              
