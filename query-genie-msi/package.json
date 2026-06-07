@@ -1,0 +1,83 @@
+{
+  "name": "query-genie",
+  "version": "1.0.0",
+  "description": "AI-Powered Database Query Tool",
+  "main": "main.js",
+  "author": "Query Genie Team",
+  "license": "MIT",
+  "scripts": {
+    "start": "electron .",
+    "build:backend": "build-backend.bat",
+    "build:frontend": "build-frontend.bat",
+    "build:win": "electron-builder --win --x64",
+    "build:all": "npm run build:backend && npm run build:frontend && npm run build:win",
+    "publish": "electron-builder --win --x64 --publish always"
+  },
+  "dependencies": {
+    "electron-squirrel-startup": "^1.0.0",
+    "electron-updater": "^6.1.7"
+  },
+  "devDependencies": {
+    "electron": "^28.1.0",
+    "electron-builder": "^24.9.1"
+  },
+  "build": {
+    "appId": "com.querygenie.app",
+    "productName": "Query Genie",
+    "copyright": "Copyright © 2026 Query Genie Team",
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "requestedExecutionLevel": "asInvoker",
+      "publisherName": "Query Genie"
+    },
+    "msi": {
+      "oneClick": false,
+      "perMachine": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Query Genie"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Query Genie",
+      "perMachine": true
+    },
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "package.json",
+      "frontend/**/*"
+    ],
+    "asarUnpack": [
+      "resources/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "resources",
+        "to": "resources",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ],
+    "publish": {
+      "provider": "github",
+      "owner": "your-username",
+      "repo": "query-genie"
+    }
+  }
+}

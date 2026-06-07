@@ -403,13 +403,8 @@ const Index = () => {
               </div>
               <Button
                 onClick={() => {
-                  // For now, this alerts users. You can replace with actual download link
-                  const link = document.createElement('a');
-                  link.href = '/Query-Genie-Setup.exe'; // You'll need to place the installer here
-                  link.download = 'Query-Genie-Setup-1.0.0.exe';
-                  document.body.appendChild(link);
-                  link.click();
-                  document.body.removeChild(link);
+                  // Download from GitHub Releases
+                  window.open('https://github.com/vaibhavburad15/Query-Genie/releases/download/v1.0.0/Query-Genie-Setup.exe', '_blank');
                 }}
                 className="landing-btn-primary h-11 whitespace-nowrap rounded-xl px-6 text-sm"
               >
@@ -642,12 +637,8 @@ const Index = () => {
                   <div className="hidden md:block">
                     <Button
                       onClick={() => {
-                        const link = document.createElement('a');
-                        link.href = '/Query-Genie-Setup.exe';
-                        link.download = 'Query-Genie-Setup-1.0.0.exe';
-                        document.body.appendChild(link);
-                        link.click();
-                        document.body.removeChild(link);
+                        // Download from GitHub Releases
+                        window.open('https://github.com/vaibhavburad15/Query-Genie/releases/download/v1.0.0/Query-Genie-Setup.exe', '_blank');
                       }}
                       className="landing-btn-primary h-11 whitespace-nowrap rounded-xl px-6 text-sm"
                     >

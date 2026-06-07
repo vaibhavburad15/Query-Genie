@@ -71,8 +71,17 @@ htmlcov/
 *_SECRET*
 *_PASSWORD*
 
-# MSI/EXE Installers (too large for Git - use GitHub Releases instead)
-Query-frontend/public/Query-Genie-Setup.exe
+# Exclude only EXE/MSI installer files (too large for Git)
+*.exe
+*.msi
+!query-genie-msi/**/*.bat
+!query-genie-msi/**/*.js
+!query-genie-msi/**/*.json
+!query-genie-msi/**/*.html
+!query-genie-msi/**/*.md
 
-# Exclude entire MSI builder folder
-query-genie-msi/
+# Exclude built artifacts and dependencies
+query-genie-msi/node_modules/
+query-genie-msi/dist/
+query-genie-msi/frontend/
+query-genie-msi/resources/backend/*.exe
