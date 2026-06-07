@@ -372,107 +372,82 @@ const Index = () => {
                   </div>
                 </div>
 
-                <div className="landing-float-badge -left-4 top-12 hidden md:flex">
-                  <Zap className="h-4 w-4 text-amber-300" />
-                  1.2s query preview
-                </div>
-                <div className="landing-float-badge -right-3 bottom-20 hidden md:flex">
-                  <Lock className="h-4 w-4 text-emerald-300" />
-                  Read-only safe
-                </div>
-              </div>
-            </div>
-          </div>
-        </section>
+                          {/* Input Bar */}
+                          <div className="relative pt-4 animate-slide-in-up animation-delay-1500">
+                            <div className="bg-gray-800/80 backdrop-blur-sm border border-gray-700/50 rounded-xl px-4 py-3 flex items-center gap-3 shadow-xl">
+                              <MessageSquare className="w-4 h-4 text-gray-500" />
+                              <input 
+                                type="text" 
+                                placeholder="Ask another question..."
+                                className="flex-1 bg-transparent text-sm text-gray-300 placeholder-gray-600 outline-none"
+                                disabled
+                              />
+                              <div className="flex gap-2">
+                                <Button size="sm" className="bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700 text-white h-8 px-4 text-xs shadow-lg shadow-purple-500/30">
+                                  <Sparkles className="w-3 h-3 mr-1" />
+                                  Ask AI
+                                </Button>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
 
-        <section className="border-y border-[var(--landing-line)] bg-gradient-to-r from-violet-500/10 via-cyan-500/10 to-violet-500/10">
-          <div className="mx-auto max-w-7xl px-6 py-8 lg:px-10">
-            <div className="flex flex-col items-center justify-between gap-4 md:flex-row md:gap-6">
-              <div className="flex items-center gap-4">
-                <div className="grid h-12 w-12 shrink-0 place-items-center rounded-xl bg-gradient-to-br from-violet-500 to-cyan-400">
-                  <Download className="h-6 w-6 text-white" />
-                </div>
-                <div>
-                  <h3 className="text-lg font-bold text-[var(--landing-ink)]">
-                    Want to connect to local databases?
-                  </h3>
-                  <p className="text-sm text-[var(--landing-muted)]">
-                    Download our desktop app for full local database access
-                  </p>
-                </div>
-              </div>
-              <Button
-                onClick={() => {
-                  // Download from GitHub Releases
-                  window.open('https://github.com/vaibhavburad15/Query-Genie/releases/download/v1.0.0/Query-Genie-Setup.exe', '_blank');
-                }}
-                className="landing-btn-primary h-11 whitespace-nowrap rounded-xl px-6 text-sm"
-              >
-                <Download className="mr-2 h-4 w-4" />
-                Download Desktop App
-              </Button>
-            </div>
-          </div>
-        </section>
+                      {/* Laptop base */}
+                      <div className="h-2 bg-gradient-to-b from-gray-200 to-gray-300 rounded-b-xl"></div>
+                    </div>
 
-        <section className="border-b border-[var(--landing-line)] bg-[var(--landing-band)]">
-          <div className="mx-auto max-w-7xl px-6 py-10 lg:px-10">
-            <p className="mb-6 text-center text-xs uppercase tracking-[0.25em] text-[var(--landing-muted)]">
-              Works with the databases and files you already use
-            </p>
-            <div className="landing-mask relative overflow-hidden">
-              <div className="landing-marquee-track flex w-max gap-4">
-                {sourceMarquee.map((source, index) => (
-                  <div key={`${source.name}-${index}`} className="landing-db-pill whitespace-nowrap">
-                    <span
-                      className="h-2.5 w-2.5 rounded-full"
-                      style={{ backgroundColor: source.color }}
-                    />
-                    {source.name}
+                    {/* Keyboard shadow */}
+                    <div className="h-1 bg-gradient-to-b from-gray-400/50 to-transparent rounded-full mx-8 mt-1"></div>
                   </div>
-                ))}
-              </div>
-            </div>
-          </div>
-        </section>
 
-        <section id="workflow" className="landing-section relative">
-          <div className="landing-radial absolute inset-0 opacity-60" />
-          <div className="relative mx-auto max-w-7xl px-6 lg:px-10">
-            <div className="mb-16 max-w-2xl">
-              <div className="landing-chip mb-4">
-                <GitBranch className="h-3.5 w-3.5" />
-                Workflow
-              </div>
-              <h2 className="landing-grad-text text-4xl font-extrabold tracking-tight sm:text-5xl">
-                From connection to reusable insight
-              </h2>
-              <p className="mt-4 text-lg text-[var(--landing-muted)]">
-                Three steps. No query language required
-              </p>
-            </div>
-
-            <div className="relative grid gap-6 lg:grid-cols-3">
-              <div className="absolute left-[16%] right-[16%] top-24 hidden h-px bg-gradient-to-r from-transparent via-violet-500/40 to-transparent lg:block" />
-              {workflowSteps.map((step) => (
-                <article key={step.title} className="landing-card landing-bento-card relative p-7">
-                  <div className="mb-6 flex items-center justify-between">
-                    <span className="font-mono text-xs tracking-[0.2em] text-[var(--landing-muted)]">
-                      {step.step}
-                    </span>
-                    <div
-                      className={`grid h-12 w-12 place-items-center rounded-xl border ${getAccentClasses(
-                        step.accent
-                      )}`}
-                    >
-                      <step.icon className="h-5 w-5" />
+                  {/* Floating Elements */}
+                  <div className="absolute -right-8 top-20 animate-float">
+                    <div className="bg-white rounded-2xl p-4 shadow-2xl border border-purple-100 backdrop-blur-sm">
+                      <div className="flex items-center gap-3 mb-2">
+                        <div className="w-10 h-10 bg-gradient-to-br from-green-500 to-emerald-500 rounded-xl flex items-center justify-center shadow-lg shadow-green-500/30">
+                          <TrendingUp className="w-5 h-5 text-white" strokeWidth={2.5} />
+                        </div>
+                        <div>
+                          <div className="text-xs text-gray-500 font-medium">Performance</div>
+                          <div className="text-lg font-bold text-gray-900">+127%</div>
+                        </div>
+                      </div>
+                      <div className="text-xs text-gray-500">Query efficiency improved</div>
                     </div>
                   </div>
-                  <h3 className="mb-2 text-xl font-bold">{step.title}</h3>
-                  <p className="text-sm leading-relaxed text-[var(--landing-muted)]">{step.text}</p>
-                  {step.extra}
-                </article>
-              ))}
+
+                  <div className="absolute -left-8 top-1/3 animate-float animation-delay-1000">
+                    <div className="bg-white rounded-2xl p-4 shadow-2xl border border-blue-100 backdrop-blur-sm">
+                      <div className="flex items-center gap-3 mb-2">
+                        <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-cyan-500 rounded-xl flex items-center justify-center shadow-lg shadow-blue-500/30">
+                          <Clock className="w-5 h-5 text-white" strokeWidth={2.5} />
+                        </div>
+                        <div>
+                          <div className="text-xs text-gray-500 font-medium">Avg Response</div>
+                          <div className="text-lg font-bold text-gray-900">1.8s</div>
+                        </div>
+                      </div>
+                      <div className="text-xs text-gray-500">Lightning fast queries</div>
+                    </div>
+                  </div>
+
+                  <div className="absolute -right-6 bottom-24 animate-float animation-delay-2000">
+                    <div className="bg-white rounded-2xl p-4 shadow-2xl border border-purple-100 backdrop-blur-sm">
+                      <div className="flex items-center gap-3 mb-2">
+                        <div className="w-10 h-10 bg-gradient-to-br from-purple-500 to-pink-500 rounded-xl flex items-center justify-center shadow-lg shadow-purple-500/30">
+                          <Users className="w-5 h-5 text-white" strokeWidth={2.5} />
+                        </div>
+                        <div>
+                          <div className="text-xs text-gray-500 font-medium">Active Users</div>
+                          <div className="text-lg font-bold text-gray-900">2.4K</div>
+                        </div>
+                      </div>
+                      <div className="text-xs text-gray-500">Developers using now</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
         </section>
@@ -539,212 +514,174 @@ const Index = () => {
                       from your schema context. Works with SQL databases, file uploads, and NoSQL metadata.
                     </p>
                   </div>
-                  <div className="hidden flex-col gap-3 text-xs md:flex">
-                    <div className="landing-chip py-1.5 text-[11px]">
-                      <Sparkles className="h-3 w-3" />
-                      AI-powered
-                    </div>
-                    <div className="landing-chip py-1.5 text-[11px]">
-                      <Database className="h-3 w-3" />
-                      Multi-DB
+                  <div className="relative">
+                    <div className="absolute -inset-4 bg-gradient-to-r from-purple-200 to-blue-200 rounded-3xl blur-2xl opacity-30"></div>
+                    <div className="relative bg-white rounded-3xl p-8 shadow-2xl border border-gray-200">
+                      <div className="space-y-4">
+                        <div className="flex items-center gap-3 pb-4 border-b border-gray-200">
+                          <Database className="w-6 h-6 text-purple-600" />
+                          <span className="font-semibold text-gray-900">Database Connection</span>
+                        </div>
+                        <div className="space-y-3">
+                          <div>
+                            <label className="text-xs font-semibold text-gray-500 mb-1 block">Database Type</label>
+                            <div className="px-4 py-3 bg-gradient-to-r from-purple-50 to-blue-50 rounded-lg border border-purple-200 font-mono text-sm text-gray-900">
+                              MySQL
+                            </div>
+                          </div>
+                          <div>
+                            <label className="text-xs font-semibold text-gray-500 mb-1 block">Connection String</label>
+                            <div className="px-4 py-3 bg-gradient-to-r from-gray-50 to-gray-100 rounded-lg border border-gray-200 font-mono text-xs text-gray-600">
+                              mysql://user:****@host:3306/db
+                            </div>
+                          </div>
+                          <Button className="w-full bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700 text-white shadow-lg">
+                            <CheckCircle2 className="w-4 h-4 mr-2" />
+                            Connected Successfully
+                          </Button>
+                        </div>
+                      </div>
                     </div>
                   </div>
                 </div>
-              </div>
 
-              <div className="landing-card landing-bento-card p-7 md:col-span-2">
-                <FeatureIcon icon={ShieldCheck} accent="green" />
-                <h3 className="mb-2 text-lg font-bold">Query validation</h3>
-                <p className="text-sm text-[var(--landing-muted)]">
-                  All queries are validated for safety. Write operations require explicit approval before execution.
-                </p>
-              </div>
-
-              <div className="landing-card landing-bento-card p-7 md:col-span-2">
-                <FeatureIcon icon={BarChart3} accent="cyan" />
-                <h3 className="mb-2 text-lg font-bold">Interactive visualizations</h3>
-                <p className="text-sm text-[var(--landing-muted)]">
-                  View results as sortable tables or dynamic charts. Export to CSV/JSON with one click.
-                </p>
-              </div>
-
-              <div className="landing-card landing-bento-card p-7 md:col-span-4">
-                <div className="flex items-start justify-between gap-6">
-                  <div>
-                    <FeatureIcon icon={Star} accent="pink" />
-                    <h3 className="mb-2 text-xl font-bold">Favorites and history</h3>
-                    <p className="max-w-md text-sm text-[var(--landing-muted)]">
-                      Save frequently used queries, revisit chat sessions, and track execution history with detailed stats.
+                {/* Step 2 */}
+                <div className="relative grid lg:grid-cols-2 gap-12 items-center">
+                  <div className="lg:order-2 space-y-6">
+                    <div className="inline-flex items-center gap-3">
+                      <div className="w-12 h-12 bg-gradient-to-br from-blue-100 to-blue-200 rounded-xl flex items-center justify-center font-bold text-2xl text-blue-700 shadow-lg">
+                        02
+                      </div>
+                      <div className="w-16 h-16 bg-gradient-to-br from-blue-600 to-blue-700 rounded-2xl flex items-center justify-center shadow-2xl shadow-blue-500/40 ring-4 ring-blue-100">
+                        <MessageSquare className="w-8 h-8 text-white" strokeWidth={2.5} />
+                      </div>
+                    </div>
+                    <h3 className="text-3xl font-bold text-gray-900">Ask in Natural Language</h3>
+                    <p className="text-lg text-gray-600 leading-relaxed">
+                      Type your questions as if you're talking to a colleague. Our AI understands context, relationships, and complex aggregations.
                     </p>
+                    <ul className="space-y-3 text-gray-700">
+                      <li className="flex items-center gap-3">
+                        <CheckCircle2 className="w-5 h-5 text-green-500 flex-shrink-0" />
+                        <span>Context-aware query understanding</span>
+                      </li>
+                      <li className="flex items-center gap-3">
+                        <CheckCircle2 className="w-5 h-5 text-green-500 flex-shrink-0" />
+                        <span>Support for complex joins & aggregations</span>
+                      </li>
+                      <li className="flex items-center gap-3">
+                        <CheckCircle2 className="w-5 h-5 text-green-500 flex-shrink-0" />
+                        <span>Multi-language support</span>
+                      </li>
+                    </ul>
                   </div>
-                  <div className="hidden w-56 space-y-2 md:block">
-                    <MiniHistory icon={Star} iconClass="text-amber-300" text="Monthly revenue by region" />
-                    <MiniHistory icon={History} iconClass="text-[var(--landing-muted)]" text="Active users last 7 days" />
-                    <MiniHistory icon={History} iconClass="text-[var(--landing-muted)]" text="Top 5 products Q1" />
+                  <div className="lg:order-1 relative">
+                    <div className="absolute -inset-4 bg-gradient-to-r from-blue-200 to-purple-200 rounded-3xl blur-2xl opacity-30"></div>
+                    <div className="relative bg-white rounded-3xl p-8 shadow-2xl border border-gray-200">
+                      <div className="space-y-4">
+                        <div className="flex items-center gap-3 pb-4 border-b border-gray-200">
+                          <MessageSquare className="w-6 h-6 text-blue-600" />
+                          <span className="font-semibold text-gray-900">Ask Your Question</span>
+                        </div>
+                        <div className="space-y-3">
+                          <div className="p-4 bg-gradient-to-br from-blue-50 to-purple-50 rounded-xl border border-blue-200">
+                            <p className="text-sm text-gray-700 italic">
+                              "Show me the top 10 products by sales in Q4 2025, grouped by category"
+                            </p>
+                          </div>
+                          <div className="flex gap-2">
+                            <div className="px-3 py-1.5 bg-gray-100 rounded-lg text-xs text-gray-600 cursor-pointer hover:bg-gray-200 transition">
+                              Revenue analysis
+                            </div>
+                            <div className="px-3 py-1.5 bg-gray-100 rounded-lg text-xs text-gray-600 cursor-pointer hover:bg-gray-200 transition">
+                              User metrics
+                            </div>
+                            <div className="px-3 py-1.5 bg-gray-100 rounded-lg text-xs text-gray-600 cursor-pointer hover:bg-gray-200 transition">
+                              Inventory check
+                            </div>
+                          </div>
+                          <Button className="w-full bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white shadow-lg">
+                            <Sparkles className="w-4 h-4 mr-2" />
+                            Generate SQL Query
+                          </Button>
+                        </div>
+                      </div>
+                    </div>
                   </div>
                 </div>
-              </div>
 
-              <div className="landing-card landing-bento-card p-7 md:col-span-3">
-                <FeatureIcon icon={FileSpreadsheet} accent="amber" />
-                <h3 className="mb-2 text-lg font-bold">File upload support</h3>
-                <p className="text-sm text-[var(--landing-muted)]">
-                  Upload CSV and Excel files. They're automatically staged as queryable tables for instant analysis.
-                </p>
-              </div>
-
-              <div className="landing-card landing-bento-card p-7 md:col-span-3">
-                <FeatureIcon icon={LayoutDashboard} accent="fuchsia" />
-                <h3 className="mb-2 text-lg font-bold">Custom dashboards</h3>
-                <p className="text-sm text-[var(--landing-muted)]">
-                  Create personalized dashboards with multiple chart types and drag-and-drop layouts.
-                </p>
-              </div>
-
-              <div className="landing-card landing-bento-card bg-gradient-to-br from-violet-500/5 to-cyan-500/5 p-7 md:col-span-6">
-                <div className="flex items-start justify-between gap-6">
-                  <div>
-                    <div className="mb-4 flex items-center gap-3">
-                      <div className="grid h-10 w-10 place-items-center rounded-lg bg-gradient-to-br from-violet-500 to-cyan-400">
-                        <Download className="h-5 w-5 text-white" />
+                {/* Step 3 */}
+                <div className="relative grid lg:grid-cols-2 gap-12 items-center">
+                  <div className="lg:text-right space-y-6">
+                    <div className="inline-flex items-center gap-3 lg:float-right">
+                      <div className="w-16 h-16 bg-gradient-to-br from-green-600 to-emerald-600 rounded-2xl flex items-center justify-center shadow-2xl shadow-green-500/40 ring-4 ring-green-100">
+                        <BarChart3 className="w-8 h-8 text-white" strokeWidth={2.5} />
                       </div>
-                      <span className="landing-chip py-1.5 text-[11px]">
-                        <span className="landing-pulse-dot h-2 w-2 rounded-full bg-emerald-400" />
-                        Desktop App Available
-                      </span>
+                      <div className="w-12 h-12 bg-gradient-to-br from-green-100 to-green-200 rounded-xl flex items-center justify-center font-bold text-2xl text-green-700 shadow-lg">
+                        03
+                      </div>
                     </div>
-                    <h3 className="mb-2 text-xl font-bold">Local Database Access</h3>
-                    <p className="max-w-2xl text-sm text-[var(--landing-muted)]">
-                      Need to connect to databases running on your local machine (localhost)? Download our desktop application 
-                      for full access to MySQL, PostgreSQL, SQL Server, and other databases on your computer. 
-                      Perfect for developers working with local development environments.
+                    <div className="clear-both"></div>
+                    <h3 className="text-3xl font-bold text-gray-900">Get Instant Results</h3>
+                    <p className="text-lg text-gray-600 leading-relaxed">
+                      Receive optimized SQL queries with automatic visualization. Export to CSV, JSON, or integrate with your BI tools.
                     </p>
-                    <div className="mt-4 flex flex-wrap gap-2">
-                      <span className="landing-chip text-[10px]">
-                        <Database className="h-2.5 w-2.5" />
-                        Localhost Support
-                      </span>
-                      <span className="landing-chip text-[10px]">
-                        <ShieldCheck className="h-2.5 w-2.5" />
-                        Secure
-                      </span>
-                      <span className="landing-chip text-[10px]">
-                        <Zap className="h-2.5 w-2.5" />
-                        Fast
-                      </span>
-                    </div>
+                    <ul className="space-y-3 text-gray-700">
+                      <li className="flex items-center gap-3 lg:justify-end">
+                        <span>Auto-generated charts & graphs</span>
+                        <CheckCircle2 className="w-5 h-5 text-green-500 flex-shrink-0" />
+                      </li>
+                      <li className="flex items-center gap-3 lg:justify-end">
+                        <span>Multiple export formats</span>
+                        <CheckCircle2 className="w-5 h-5 text-green-500 flex-shrink-0" />
+                      </li>
+                      <li className="flex items-center gap-3 lg:justify-end">
+                        <span>Query optimization suggestions</span>
+                        <CheckCircle2 className="w-5 h-5 text-green-500 flex-shrink-0" />
+                      </li>
+                    </ul>
                   </div>
-                  <div className="hidden md:block">
-                    <Button
-                      onClick={() => {
-                        // Download from GitHub Releases
-                        window.open('https://github.com/vaibhavburad15/Query-Genie/releases/download/v1.0.0/Query-Genie-Setup.exe', '_blank');
-                      }}
-                      className="landing-btn-primary h-11 whitespace-nowrap rounded-xl px-6 text-sm"
-                    >
-                      <Download className="mr-2 h-4 w-4" />
-                      Download Now
-                    </Button>
-                  </div>
-                </div>
-              </div>
-
-             
-            </div>
-          </div>
-        </section>
-
-        <section className="landing-section relative bg-[var(--landing-band)]">
-          <div className="landing-radial absolute inset-0 opacity-40" />
-          <div className="relative mx-auto max-w-7xl px-6 lg:px-10">
-            <div className="landing-card overflow-hidden">
-              <div className="grid items-center gap-8 p-8 md:grid-cols-2 lg:gap-12 lg:p-12">
-                <div>
-                  <div className="landing-chip mb-5">
-                    <FileText className="h-3.5 w-3.5" />
-                    Documentation
-                  </div>
-                  <h2 className="landing-grad-text text-3xl font-extrabold tracking-tight sm:text-4xl lg:text-5xl">
-                    Complete Documentation
-                  </h2>
-                  <p className="mt-5 text-base leading-relaxed text-[var(--landing-soft)] lg:text-lg">
-                    Download the comprehensive Query Genie documentation guide. Learn about all features, setup instructions, database connections, and best practices in one complete PDF document.
-                  </p>
-                  <ul className="mt-6 space-y-3">
-                    <li className="flex items-start gap-3 text-sm text-[var(--landing-muted)]">
-                      <CheckCircle2 className="h-5 w-5 shrink-0 text-emerald-400" />
-                      <span>Step-by-step setup and installation guide</span>
-                    </li>
-                    <li className="flex items-start gap-3 text-sm text-[var(--landing-muted)]">
-                      <CheckCircle2 className="h-5 w-5 shrink-0 text-emerald-400" />
-                      <span>Database connection configurations</span>
-                    </li>
-                    <li className="flex items-start gap-3 text-sm text-[var(--landing-muted)]">
-                      <CheckCircle2 className="h-5 w-5 shrink-0 text-emerald-400" />
-                      <span>Feature explanations and usage examples</span>
-                    </li>
-                    <li className="flex items-start gap-3 text-sm text-[var(--landing-muted)]">
-                      <CheckCircle2 className="h-5 w-5 shrink-0 text-emerald-400" />
-                      <span>Troubleshooting and FAQ section</span>
-                    </li>
-                  </ul>
-                  <div className="mt-8">
-                    <Button
-                      onClick={() => {
-                        const link = document.createElement('a');
-                        link.href = '/Query-genie-document.pdf';
-                        link.download = 'Query-Genie-Documentation.pdf';
-                        document.body.appendChild(link);
-                        link.click();
-                        document.body.removeChild(link);
-                      }}
-                      className="landing-btn-primary h-12 rounded-xl px-6 text-base"
-                    >
-                      <Download className="mr-2 h-5 w-5" />
-                      Download Documentation
-                    </Button>
-                  </div>
-                </div>
-                <div className="relative">
-                  <div className="absolute -inset-4 rounded-2xl bg-gradient-to-br from-violet-500/20 to-cyan-500/20 blur-2xl" />
-                  <div className="relative overflow-hidden rounded-2xl border border-[var(--landing-line)] bg-[var(--landing-band)] p-8 shadow-2xl">
-                    <div className="mb-4 flex items-center gap-3">
-                      <div className="grid h-14 w-14 place-items-center rounded-xl bg-gradient-to-br from-violet-500 to-violet-600">
-                        <FileText className="h-7 w-7 text-white" />
-                      </div>
-                      <div>
-                        <h3 className="font-bold text-[var(--landing-ink)]">Query Genie</h3>
-                        <p className="text-sm text-[var(--landing-muted)]">Documentation Guide</p>
-                      </div>
-                    </div>
-                    <div className="space-y-2 text-sm text-[var(--landing-muted)]">
-                      <div className="flex items-center justify-between rounded-lg border border-[var(--landing-line)] bg-[var(--landing-card)] px-3 py-2">
-                        <span className="flex items-center gap-2">
-                          <ShieldCheck className="h-4 w-4 text-emerald-400" />
-                          Database Security
-                        </span>
-                        <Check className="h-4 w-4 text-emerald-400" />
-                      </div>
-                      <div className="flex items-center justify-between rounded-lg border border-[var(--landing-line)] bg-[var(--landing-card)] px-3 py-2">
-                        <span className="flex items-center gap-2">
-                          <Sparkles className="h-4 w-4 text-cyan-400" />
-                          Features Guide
-                        </span>
-                        <Check className="h-4 w-4 text-emerald-400" />
-                      </div>
-                      <div className="flex items-center justify-between rounded-lg border border-[var(--landing-line)] bg-[var(--landing-card)] px-3 py-2">
-                        <span className="flex items-center gap-2">
-                          <Play className="h-4 w-4 text-violet-400" />
-                          How to Use
-                        </span>
-                        <Check className="h-4 w-4 text-emerald-400" />
-                      </div>
-                      <div className="flex items-center justify-between rounded-lg border border-[var(--landing-line)] bg-[var(--landing-card)] px-3 py-2">
-                        <span className="flex items-center gap-2">
-                          <KeyRound className="h-4 w-4 text-amber-400" />
-                          Best Practices
-                        </span>
-                        <Check className="h-4 w-4 text-emerald-400" />
+                  <div className="relative">
+                    <div className="absolute -inset-4 bg-gradient-to-r from-green-200 to-emerald-200 rounded-3xl blur-2xl opacity-30"></div>
+                    <div className="relative bg-white rounded-3xl p-8 shadow-2xl border border-gray-200">
+                      <div className="space-y-4">
+                        <div className="flex items-center justify-between pb-4 border-b border-gray-200">
+                          <div className="flex items-center gap-3">
+                            <BarChart3 className="w-6 h-6 text-green-600" />
+                            <span className="font-semibold text-gray-900">Query Results</span>
+                          </div>
+                          <div className="flex gap-2">
+                            <Button size="sm" variant="ghost" className="h-8">
+                              <Download className="w-4 h-4" />
+                            </Button>
+                          </div>
+                        </div>
+                        <div className="space-y-3">
+                          {[
+                            { label: 'Electronics', value: 95, color: 'purple' },
+                            { label: 'Clothing', value: 78, color: 'blue' },
+                            { label: 'Home & Garden', value: 62, color: 'green' }
+                          ].map((item, i) => (
+                            <div key={i} className="space-y-2">
+                              <div className="flex justify-between text-sm">
+                                <span className="font-medium text-gray-700">{item.label}</span>
+                                <span className="font-bold text-gray-900">${item.value}K</span>
+                              </div>
+                              <div className="h-3 bg-gray-100 rounded-full overflow-hidden">
+                                <div 
+                                  className={`h-full bg-gradient-to-r from-${item.color}-500 to-${item.color}-600 rounded-full transition-all duration-1000 shadow-lg`}
+                                  style={{ width: `${item.value}%` }}
+                                ></div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                        <div className="pt-4 border-t border-gray-200 flex justify-between items-center">
+                          <span className="text-sm text-gray-500">Query executed in 1.2s</span>
+                          <Button size="sm" className="bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 text-white h-8">
+                            View Full Report
+                          </Button>
+                        </div>
                       </div>
                     </div>
                   </div>
