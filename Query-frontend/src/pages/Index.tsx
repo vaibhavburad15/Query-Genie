@@ -142,6 +142,8 @@ const creatorProfile = {
 };
 
 const dbColor = new Map(databaseSources.map((source) => [source.name, source.color]));
+const desktopAppDownloadUrl =
+  'https://github.com/vaibhavburad15/Query-Genie/releases/download/v1.0.0/Query-Genie-Setup.exe';
 
 const getAccentClasses = (accent: string) => {
   const classes = {
@@ -172,6 +174,15 @@ const Index = () => {
 
   const goToAuth = () => navigate('/auth');
   const [profileImageError, setProfileImageError] = useState(false);
+  const downloadDesktopApp = () => {
+    const link = document.createElement('a');
+    link.href = desktopAppDownloadUrl;
+    link.download = 'Query-Genie-Setup.exe';
+    link.rel = 'noopener';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
 
   return (
     <div className="landing-page min-h-screen overflow-x-hidden bg-[var(--landing-bg)] text-[var(--landing-ink)]">
@@ -665,6 +676,101 @@ const Index = () => {
                         <span className="flex items-center gap-2">
                           <KeyRound className="h-4 w-4 text-amber-400" />
                           Best Practices
+                        </span>
+                        <Check className="h-4 w-4 text-emerald-400" />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section className="landing-section relative">
+          <div className="landing-radial absolute inset-0 opacity-40" />
+          <div className="relative mx-auto max-w-7xl px-6 lg:px-10">
+            <div className="landing-card overflow-hidden">
+              <div className="grid items-center gap-8 p-8 md:grid-cols-2 lg:gap-12 lg:p-12">
+                <div>
+                  <div className="landing-chip mb-5">
+                    <Download className="h-3.5 w-3.5" />
+                    Desktop App
+                  </div>
+                  <h2 className="landing-grad-text text-3xl font-extrabold tracking-tight sm:text-4xl lg:text-5xl">
+                    Download Query Genie Desktop App
+                  </h2>
+                  <p className="mt-5 text-base leading-relaxed text-[var(--landing-soft)] lg:text-lg">
+                    Install the Windows desktop app to connect Query Genie with local databases running on
+                    your machine.
+                  </p>
+                  <ul className="mt-6 space-y-3">
+                    <li className="flex items-start gap-3 text-sm text-[var(--landing-muted)]">
+                      <CheckCircle2 className="h-5 w-5 shrink-0 text-emerald-400" />
+                      <span>Connect to local database servers without exposing them online</span>
+                    </li>
+                    <li className="flex items-start gap-3 text-sm text-[var(--landing-muted)]">
+                      <CheckCircle2 className="h-5 w-5 shrink-0 text-emerald-400" />
+                      <span>Use the Query Genie desktop experience for local analysis</span>
+                    </li>
+                    <li className="flex items-start gap-3 text-sm text-[var(--landing-muted)]">
+                      <CheckCircle2 className="h-5 w-5 shrink-0 text-emerald-400" />
+                      <span>Download the Windows installer directly from the official release</span>
+                    </li>
+                  </ul>
+                  <div className="mt-8">
+                    <Button
+                      onClick={downloadDesktopApp}
+                      className="landing-btn-primary h-12 rounded-xl px-6 text-base"
+                    >
+                      <Download className="mr-2 h-5 w-5" />
+                      Download Desktop App
+                    </Button>
+                  </div>
+                </div>
+
+                <div className="relative">
+                  <div className="absolute -inset-4 rounded-2xl bg-gradient-to-br from-emerald-500/20 to-violet-500/20 blur-2xl" />
+                  <div className="relative overflow-hidden rounded-2xl border border-[var(--landing-line)] bg-[var(--landing-band)] p-8 shadow-2xl">
+                    <div className="mb-6 flex items-center justify-between gap-3">
+                      <div className="flex items-center gap-3">
+                        <div className="grid h-14 w-14 place-items-center rounded-xl bg-gradient-to-br from-emerald-500 to-cyan-500">
+                          <Database className="h-7 w-7 text-white" />
+                        </div>
+                        <div>
+                          <h3 className="font-bold text-[var(--landing-ink)]">Local Database</h3>
+                          <p className="text-sm text-[var(--landing-muted)]">Desktop connection mode</p>
+                        </div>
+                      </div>
+                      <span className="landing-chip py-1 text-[10px]">
+                        <span className="h-2 w-2 rounded-full bg-emerald-400" />
+                        Ready
+                      </span>
+                    </div>
+
+                    <div className="space-y-3 text-sm text-[var(--landing-muted)]">
+                      <div className="rounded-xl border border-[var(--landing-line)] bg-[var(--landing-card)] px-4 py-3">
+                        <div className="mb-2 flex items-center gap-2 text-[var(--landing-soft)]">
+                          <Plug className="h-4 w-4 text-violet-400" />
+                          Local connector
+                        </div>
+                        <div className="font-mono text-xs text-[var(--landing-muted)]">
+                          localhost:3306 / 5432 / custom port
+                        </div>
+                      </div>
+                      <div className="rounded-xl border border-[var(--landing-line)] bg-[var(--landing-card)] px-4 py-3">
+                        <div className="mb-2 flex items-center gap-2 text-[var(--landing-soft)]">
+                          <Lock className="h-4 w-4 text-emerald-400" />
+                          Local-first access
+                        </div>
+                        <div className="font-mono text-xs text-[var(--landing-muted)]">
+                          Query local schemas from your desktop app
+                        </div>
+                      </div>
+                      <div className="flex items-center justify-between rounded-xl border border-[var(--landing-line)] bg-[var(--landing-card)] px-4 py-3">
+                        <span className="flex items-center gap-2 text-[var(--landing-soft)]">
+                          <ShieldCheck className="h-4 w-4 text-emerald-400" />
+                          Windows installer
                         </span>
                         <Check className="h-4 w-4 text-emerald-400" />
                       </div>
