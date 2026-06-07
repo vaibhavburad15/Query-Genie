@@ -70,3 +70,9 @@ htmlcov/
 *_API_KEY*
 *_SECRET*
 *_PASSWORD*
+
+# MSI/EXE Installers (too large for Git - use GitHub Releases instead)
+Query-frontend/public/Query-Genie-Setup.exe
+
+# Exclude entire MSI builder folder
+query-genie-msi/
