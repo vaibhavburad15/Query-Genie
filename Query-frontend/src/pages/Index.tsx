@@ -6,6 +6,7 @@ import {
   BarChart3,
   Check,
   CheckCircle2,
+  Clock,
   Database,
   Download,
   FileSpreadsheet,
@@ -28,7 +29,9 @@ import {
   Sparkles,
   Star,
   Terminal,
+  TrendingUp,
   UserRound,
+  Users,
   XCircle,
   Zap,
 } from 'lucide-react';
@@ -368,82 +371,6 @@ const Index = () => {
                           </div>
                         </div>
                       </div>
-                    </div>
-                  </div>
-                </div>
-
-                          {/* Input Bar */}
-                          <div className="relative pt-4 animate-slide-in-up animation-delay-1500">
-                            <div className="bg-gray-800/80 backdrop-blur-sm border border-gray-700/50 rounded-xl px-4 py-3 flex items-center gap-3 shadow-xl">
-                              <MessageSquare className="w-4 h-4 text-gray-500" />
-                              <input 
-                                type="text" 
-                                placeholder="Ask another question..."
-                                className="flex-1 bg-transparent text-sm text-gray-300 placeholder-gray-600 outline-none"
-                                disabled
-                              />
-                              <div className="flex gap-2">
-                                <Button size="sm" className="bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700 text-white h-8 px-4 text-xs shadow-lg shadow-purple-500/30">
-                                  <Sparkles className="w-3 h-3 mr-1" />
-                                  Ask AI
-                                </Button>
-                              </div>
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* Laptop base */}
-                      <div className="h-2 bg-gradient-to-b from-gray-200 to-gray-300 rounded-b-xl"></div>
-                    </div>
-
-                    {/* Keyboard shadow */}
-                    <div className="h-1 bg-gradient-to-b from-gray-400/50 to-transparent rounded-full mx-8 mt-1"></div>
-                  </div>
-
-                  {/* Floating Elements */}
-                  <div className="absolute -right-8 top-20 animate-float">
-                    <div className="bg-white rounded-2xl p-4 shadow-2xl border border-purple-100 backdrop-blur-sm">
-                      <div className="flex items-center gap-3 mb-2">
-                        <div className="w-10 h-10 bg-gradient-to-br from-green-500 to-emerald-500 rounded-xl flex items-center justify-center shadow-lg shadow-green-500/30">
-                          <TrendingUp className="w-5 h-5 text-white" strokeWidth={2.5} />
-                        </div>
-                        <div>
-                          <div className="text-xs text-gray-500 font-medium">Performance</div>
-                          <div className="text-lg font-bold text-gray-900">+127%</div>
-                        </div>
-                      </div>
-                      <div className="text-xs text-gray-500">Query efficiency improved</div>
-                    </div>
-                  </div>
-
-                  <div className="absolute -left-8 top-1/3 animate-float animation-delay-1000">
-                    <div className="bg-white rounded-2xl p-4 shadow-2xl border border-blue-100 backdrop-blur-sm">
-                      <div className="flex items-center gap-3 mb-2">
-                        <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-cyan-500 rounded-xl flex items-center justify-center shadow-lg shadow-blue-500/30">
-                          <Clock className="w-5 h-5 text-white" strokeWidth={2.5} />
-                        </div>
-                        <div>
-                          <div className="text-xs text-gray-500 font-medium">Avg Response</div>
-                          <div className="text-lg font-bold text-gray-900">1.8s</div>
-                        </div>
-                      </div>
-                      <div className="text-xs text-gray-500">Lightning fast queries</div>
-                    </div>
-                  </div>
-
-                  <div className="absolute -right-6 bottom-24 animate-float animation-delay-2000">
-                    <div className="bg-white rounded-2xl p-4 shadow-2xl border border-purple-100 backdrop-blur-sm">
-                      <div className="flex items-center gap-3 mb-2">
-                        <div className="w-10 h-10 bg-gradient-to-br from-purple-500 to-pink-500 rounded-xl flex items-center justify-center shadow-lg shadow-purple-500/30">
-                          <Users className="w-5 h-5 text-white" strokeWidth={2.5} />
-                        </div>
-                        <div>
-                          <div className="text-xs text-gray-500 font-medium">Active Users</div>
-                          <div className="text-lg font-bold text-gray-900">2.4K</div>
-                        </div>
-                      </div>
-                      <div className="text-xs text-gray-500">Developers using now</div>
                     </div>
                   </div>
                 </div>
