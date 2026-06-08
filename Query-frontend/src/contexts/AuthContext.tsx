@@ -7,7 +7,7 @@ import {
   logout as apiLogout,
   getUserProfile as apiGetUserProfile,
 } from '@/services/api';
-import { AUTH_FAILURE_EVENT, clearDbSessionToken } from '@/services/apiClient';
+import { AUTH_FAILURE_EVENT, clearAuthToken, clearDbSessionToken, storeAuthToken } from '@/services/apiClient';
 
 interface User {
   id: number;
@@ -62,6 +62,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     const clearStoredAuth = () => {
       localStorage.removeItem('user');
       localStorage.removeItem('isAuthenticated');
+      clearAuthToken();
       clearDbSessionToken();
     };
 
@@ -143,6 +144,9 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       // Auth token is now in HttpOnly cookie - no need to store it
       if (response.success && response.user) {
         const userData: User = response.user;
+        if (response.auth_token) {
+          storeAuthToken(response.auth_token);
+        }
         setUser(userData);
         setIsAuthenticated(true);
         setJustLoggedIn(true);
@@ -175,6 +179,9 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       // Backend now returns the user object on successful signup
       // Auth token is in HttpOnly cookie
       if (response.success && response.user) {
+        if (response.auth_token) {
+          storeAuthToken(response.auth_token);
+        }
         const newUser: User = {
           id: response.user.id,
           email: response.user.email,
@@ -219,6 +226,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     setJustLoggedIn(false);
     localStorage.removeItem('user');
     localStorage.removeItem('isAuthenticated');
+    clearAuthToken();
     // Auth token cookie is cleared by backend
     // Clear the per-user DB session token so it isn't reused after logout
     clearDbSessionToken();

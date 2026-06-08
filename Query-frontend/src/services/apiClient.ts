@@ -24,7 +24,20 @@ function getDefaultBaseUrl(): string {
 export const BASE_URL: string = configuredBaseUrl?.trim() || getDefaultBaseUrl();
 
 const SESSION_KEY = 'db_session_token';
+const AUTH_TOKEN_KEY = 'auth_token';
 export const AUTH_FAILURE_EVENT = 'query-genie:auth-failure';
+
+export function storeAuthToken(token: string): void {
+  localStorage.setItem(AUTH_TOKEN_KEY, token);
+}
+
+export function getAuthToken(): string | null {
+  return localStorage.getItem(AUTH_TOKEN_KEY);
+}
+
+export function clearAuthToken(): void {
+  localStorage.removeItem(AUTH_TOKEN_KEY);
+}
 
 export function storeDbSessionToken(token: string): void {
   sessionStorage.setItem(SESSION_KEY, token);
@@ -41,13 +54,18 @@ export function clearDbSessionToken(): void {
 function clearStoredAuthState(): void {
   localStorage.removeItem('user');
   localStorage.removeItem('isAuthenticated');
+  clearAuthToken();
   clearDbSessionToken();
 }
 
-function shouldHandleAuthFailure(path: string): boolean {
-  return !['/api/login', '/api/signup', '/api/send-otp'].some((publicPath) =>
+function isPublicAuthPath(path: string): boolean {
+  return ['/api/login', '/api/signup', '/api/send-otp'].some((publicPath) =>
     path.startsWith(publicPath)
   );
+}
+
+function shouldHandleAuthFailure(path: string): boolean {
+  return !isPublicAuthPath(path);
 }
 
 export async function apiFetch(
@@ -55,10 +73,15 @@ export async function apiFetch(
   options: RequestInit = {}
 ): Promise<Response> {
   const dbSessionToken = getDbSessionToken();
+  const authToken = getAuthToken();
 
   const headers: Record<string, string> = {
     ...(options.headers as Record<string, string> | undefined),
   };
+
+  if (authToken && !isPublicAuthPath(path) && !headers.Authorization) {
+    headers.Authorization = `Bearer ${authToken}`;
+  }
 
   if (dbSessionToken) {
     headers['X-DB-Session'] = dbSessionToken;

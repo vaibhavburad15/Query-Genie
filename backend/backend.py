@@ -16,7 +16,7 @@ import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from passlib.context import CryptContext
-from langchain_community.utilities import SQLDatabase
+from langchain_community.utilities.sql_database import SQLDatabase
 from langchain_groq import ChatGroq
 from langchain_core.messages import SystemMessage, HumanMessage
 import requests
@@ -44,6 +44,7 @@ from urllib.parse import quote_plus, urlparse
 
 from extended_models import (
     FavoriteQuery,
+    QueryRecommendation,
     UserSettings,
     QueryHistory,
     Base
@@ -233,6 +234,59 @@ class OtpCode(Base):
     expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
 
 
+def quote_internal_sqlite_identifier(identifier: str) -> str:
+    return f'"{identifier.replace(chr(34), chr(34) * 2)}"'
+
+
+def migrate_user_dashboards_schema(connection: Any, inspector: Any) -> None:
+    if not inspector.has_table("user_dashboards"):
+        return
+
+    column_info = inspector.get_columns("user_dashboards")
+    columns = {column["name"] for column in column_info}
+    id_type = str(next((column["type"] for column in column_info if column["name"] == "id"), "")).upper()
+    needs_rebuild = (
+        "dashboard_id" not in columns
+        or "charts_data" not in columns
+        or "INT" not in id_type
+    )
+    if not needs_rebuild:
+        return
+
+    backup_table = f"user_dashboards_legacy_{int(time.time())}_{secrets.token_hex(4)}"
+    backup_ident = quote_internal_sqlite_identifier(backup_table)
+    connection.execute(text(f'ALTER TABLE user_dashboards RENAME TO {backup_ident}'))
+    UserDashboard.__table__.create(connection, checkfirst=True)
+
+    def column_expr(name: str, fallback: str) -> str:
+        return quote_internal_sqlite_identifier(name) if name in columns else fallback
+
+    dashboard_id_expr = column_expr("dashboard_id", "CAST(id AS TEXT)")
+    name_expr = column_expr("name", "'Untitled Dashboard'")
+    description_expr = column_expr("description", "''")
+    charts_expr = column_expr("charts_data", column_expr("charts", "'[]'"))
+    created_expr = column_expr("created_at", "CURRENT_TIMESTAMP")
+    updated_expr = column_expr("updated_at", "CURRENT_TIMESTAMP")
+
+    connection.execute(
+        text(
+            f"""
+            INSERT OR IGNORE INTO user_dashboards
+                (user_id, dashboard_id, name, description, charts_data, created_at, updated_at)
+            SELECT
+                user_id,
+                COALESCE({dashboard_id_expr}, 'dashboard_' || rowid),
+                COALESCE({name_expr}, 'Untitled Dashboard'),
+                COALESCE({description_expr}, ''),
+                COALESCE({charts_expr}, '[]'),
+                COALESCE({created_expr}, CURRENT_TIMESTAMP),
+                COALESCE({updated_expr}, CURRENT_TIMESTAMP)
+            FROM {backup_ident}
+            """
+        )
+    )
+
+
 def ensure_internal_schema() -> None:
     Base.metadata.create_all(engine)
     with engine.begin() as connection:
@@ -243,6 +297,7 @@ def ensure_internal_schema() -> None:
                 connection.execute(
                     text("ALTER TABLE database_sessions ADD COLUMN db_type VARCHAR(32) NOT NULL DEFAULT 'mysql'")
                 )
+        migrate_user_dashboards_schema(connection, inspector)
 
 
 ensure_internal_schema()
@@ -2924,6 +2979,7 @@ async def signup_user(request: Request, user: UserCreate, db: Session = Depends(
     response_data = {
         "success": True,
         "message": "User created successfully",
+        "auth_token": auth_token,
         "user": {
             "id": db_user.id,
             "email": db_user.email,
@@ -2966,6 +3022,7 @@ async def login_for_access_token(request: Request, form_data: UserLogin, db: Ses
     response_data = {
         "success": True,
         "message": "Login successful",
+        "auth_token": auth_token,
         "user": {
             "id": user.id,
             "email": user.email,
@@ -3563,6 +3620,140 @@ async def remove_favorite(
     db.delete(favorite)
     db.commit()
     return {"success": True, "message": "Removed from favorites"}
+
+
+# ─────────────────────────────────────────────
+# RECOMMENDATIONS
+# ─────────────────────────────────────────────
+DEFAULT_RECOMMENDATIONS = [
+    {
+        "category": "basic",
+        "title": "View All Records",
+        "question": "Show me all records from [table_name]",
+        "description": "Display all data from a specific table",
+    },
+    {
+        "category": "basic",
+        "title": "Count Records",
+        "question": "How many records are in [table_name]?",
+        "description": "Get the total count of rows",
+    },
+    {
+        "category": "analytics",
+        "title": "Top Results",
+        "question": "Show me the top 10 [items] by [metric]",
+        "description": "Find highest or lowest values",
+    },
+    {
+        "category": "analytics",
+        "title": "Group and Count",
+        "question": "Count [items] grouped by [category]",
+        "description": "See distribution across categories",
+    },
+    {
+        "category": "filtering",
+        "title": "Filter by Date",
+        "question": "Show [records] from the last [time period]",
+        "description": "Filter data by time range",
+    },
+    {
+        "category": "filtering",
+        "title": "Search Records",
+        "question": "Find [records] where [column] contains '[value]'",
+        "description": "Search for specific values",
+    },
+    {
+        "category": "joins",
+        "title": "Related Data",
+        "question": "Show [table1] with their related [table2]",
+        "description": "Join data from multiple tables",
+    },
+    {
+        "category": "aggregation",
+        "title": "Calculate Sum",
+        "question": "What is the total [metric] for [category]?",
+        "description": "Sum values across records",
+    },
+    {
+        "category": "aggregation",
+        "title": "Average Value",
+        "question": "What is the average [metric] by [category]?",
+        "description": "Calculate averages",
+    },
+    {
+        "category": "sorting",
+        "title": "Sort Results",
+        "question": "List [items] ordered by [column] descending",
+        "description": "Sort data in ascending or descending order",
+    },
+]
+
+RECOMMENDATION_ICONS = {
+    "basic": "T",
+    "analytics": "#",
+    "filtering": "?",
+    "joins": "+",
+    "aggregation": "S",
+    "sorting": "^",
+}
+
+
+def ensure_default_recommendations(db: Session) -> None:
+    if db.query(QueryRecommendation).first():
+        return
+    for recommendation in DEFAULT_RECOMMENDATIONS:
+        db.add(QueryRecommendation(**recommendation))
+    db.commit()
+
+
+def serialize_recommendation(recommendation: QueryRecommendation) -> Dict[str, Any]:
+    category = str(recommendation.category)
+    return {
+        "id": recommendation.id,
+        "type": "template",
+        "category": category,
+        "title": recommendation.title,
+        "question": recommendation.question,
+        "description": recommendation.description,
+        "icon": RECOMMENDATION_ICONS.get(category, "*"),
+    }
+
+
+@app.get("/api/recommendations/{user_id}")
+async def get_recommendations(
+    user_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    assert_user_access(user_id, current_user)
+    ensure_default_recommendations(db)
+    recommendations = (
+        db.query(QueryRecommendation)
+        .filter(QueryRecommendation.is_active.is_(True))
+        .order_by(QueryRecommendation.use_count.desc(), QueryRecommendation.id.asc())
+        .all()
+    )
+    return [serialize_recommendation(recommendation) for recommendation in recommendations]
+
+
+@app.post("/api/recommendations/{recommendation_id}/use")
+async def track_recommendation_use(
+    recommendation_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    recommendation = (
+        db.query(QueryRecommendation)
+        .filter(QueryRecommendation.id == recommendation_id, QueryRecommendation.is_active.is_(True))
+        .first()
+    )
+    if not recommendation:
+        raise HTTPException(status_code=404, detail="Recommendation not found")
+
+    current_use_count = int(cast(Any, recommendation.use_count) or 0)
+    setattr(recommendation, "use_count", current_use_count + 1)
+    db.commit()
+    return {"success": True}
 
 
 # ─────────────────────────────────────────────
