@@ -142,8 +142,9 @@ const creatorProfile = {
 };
 
 const dbColor = new Map(databaseSources.map((source) => [source.name, source.color]));
+const desktopAppInstallerName = 'Query-Genie-Setup-1.0.0.exe';
 const desktopAppDownloadUrl =
-  'https://github.com/vaibhavburad15/Query-Genie/releases/download/v1.0.0/Query-Genie-Setup.exe';
+  `https://github.com/vaibhavburad15/Query-Genie/releases/download/v1.0.0/${desktopAppInstallerName}`;
 
 const getAccentClasses = (accent: string) => {
   const classes = {
@@ -177,7 +178,7 @@ const Index = () => {
   const downloadDesktopApp = () => {
     const link = document.createElement('a');
     link.href = desktopAppDownloadUrl;
-    link.download = 'Query-Genie-Setup.exe';
+    link.download = desktopAppInstallerName;
     link.rel = 'noopener';
     document.body.appendChild(link);
     link.click();
