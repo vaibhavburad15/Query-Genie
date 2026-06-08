@@ -11,43 +11,7 @@ pip install -r requirements.txt
 
 echo.
 echo [2/4] Building backend with PyInstaller...
-pyinstaller --clean ^
-    --onefile ^
-    --name query-genie-backend ^
-    --add-data "sql_system_prompt.py;." ^
-    --add-data "extended_models.py;." ^
-    --add-data ".env;." ^
-    --hidden-import "fastapi" ^
-    --hidden-import "uvicorn" ^
-    --hidden-import "uvicorn.logging" ^
-    --hidden-import "uvicorn.loops" ^
-    --hidden-import "uvicorn.loops.auto" ^
-    --hidden-import "uvicorn.protocols" ^
-    --hidden-import "uvicorn.protocols.http" ^
-    --hidden-import "uvicorn.protocols.http.auto" ^
-    --hidden-import "uvicorn.protocols.websockets" ^
-    --hidden-import "uvicorn.protocols.websockets.auto" ^
-    --hidden-import "uvicorn.lifespan" ^
-    --hidden-import "uvicorn.lifespan.on" ^
-    --hidden-import "sqlalchemy" ^
-    --hidden-import "sqlalchemy.ext.declarative" ^
-    --hidden-import "langchain" ^
-    --hidden-import "langchain_groq" ^
-    --hidden-import "langchain_community" ^
-    --hidden-import "mysql.connector" ^
-    --hidden-import "psycopg2" ^
-    --hidden-import "oracledb" ^
-    --hidden-import "pyodbc" ^
-    --hidden-import "pymongo" ^
-    --hidden-import "redis" ^
-    --hidden-import "requests" ^
-    --collect-all "langchain" ^
-    --collect-all "langchain_community" ^
-    --collect-all "langchain_groq" ^
-    --collect-all "fastapi" ^
-    --collect-all "uvicorn" ^
-    --noconfirm ^
-    backend_runner.py
+pyinstaller --clean --noconfirm query-genie-backend.spec
 
 if errorlevel 1 (
     echo.

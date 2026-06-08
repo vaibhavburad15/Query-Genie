@@ -67,6 +67,13 @@
     ],
     "extraResources": [
       {
+        "from": "build",
+        "to": "build",
+        "filter": [
+          "icon.ico"
+        ]
+      },
+      {
         "from": "resources",
         "to": "resources",
         "filter": [

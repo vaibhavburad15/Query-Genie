@@ -1,19 +1,81 @@
 # -*- mode: python ; coding: utf-8 -*-
-from PyInstaller.utils.hooks import collect_all
+import sys
+from PyInstaller.utils.hooks import copy_metadata
 
-datas = [('sql_system_prompt.py', '.'), ('extended_models.py', '.'), ('.env', '.')]
+sys.setrecursionlimit(sys.getrecursionlimit() * 5)
+
+datas = [('backend.py', '.'), ('sql_system_prompt.py', '.'), ('extended_models.py', '.'), ('.env', '.')]
 binaries = []
-hiddenimports = ['fastapi', 'uvicorn', 'uvicorn.logging', 'uvicorn.loops', 'uvicorn.loops.auto', 'uvicorn.protocols', 'uvicorn.protocols.http', 'uvicorn.protocols.http.auto', 'uvicorn.protocols.websockets', 'uvicorn.protocols.websockets.auto', 'uvicorn.lifespan', 'uvicorn.lifespan.on', 'sqlalchemy', 'sqlalchemy.ext.declarative', 'langchain', 'langchain_groq', 'langchain_community', 'mysql.connector', 'psycopg2', 'oracledb', 'pyodbc', 'pymongo', 'redis', 'requests']
-tmp_ret = collect_all('langchain')
-datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
-tmp_ret = collect_all('langchain_community')
-datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
-tmp_ret = collect_all('langchain_groq')
-datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
-tmp_ret = collect_all('fastapi')
-datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
-tmp_ret = collect_all('uvicorn')
-datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
+hiddenimports = [
+    'fastapi',
+    'fastapi.middleware.cors',
+    'uvicorn',
+    'uvicorn.logging',
+    'uvicorn.loops',
+    'uvicorn.loops.auto',
+    'uvicorn.protocols',
+    'uvicorn.protocols.http',
+    'uvicorn.protocols.http.auto',
+    'uvicorn.protocols.websockets',
+    'uvicorn.protocols.websockets.auto',
+    'uvicorn.lifespan',
+    'uvicorn.lifespan.on',
+    'sqlalchemy',
+    'sqlalchemy.ext.declarative',
+    'sqlalchemy.dialects.mysql.mysqlconnector',
+    'sqlalchemy.dialects.postgresql.psycopg2',
+    'sqlalchemy.dialects.oracle.oracledb',
+    'sqlalchemy.dialects.mssql.pyodbc',
+    'ibm_db',
+    'ibm_db_sa',
+    'ibm_db_sa.ibm_db',
+    'langchain_community.utilities',
+    'langchain_community.utilities.sql_database',
+    'langchain_groq',
+    'langchain_groq.chat_models',
+    'langchain_core.messages',
+    'mysql.connector',
+    'psycopg2',
+    'oracledb',
+    'pyodbc',
+    'pymongo',
+    'redis',
+    'requests',
+    'dotenv',
+    'email_validator',
+    'slowapi',
+    'slowapi.util',
+    'slowapi.middleware',
+    'starlette',
+    'starlette.middleware',
+    'starlette.middleware.base',
+    'passlib',
+    'passlib.context',
+    'passlib.handlers.bcrypt',
+    'bcrypt',
+    'openpyxl',
+    'multipart',
+    'python_multipart',
+    'pydantic',
+    'pydantic.deprecated.decorator',
+]
+
+for package_name in ('langchain-community', 'langchain-groq', 'langchain-core', 'fastapi', 'uvicorn', 'pydantic'):
+    datas += copy_metadata(package_name)
+
+excludes = [
+    'IPython',
+    'matplotlib',
+    'notebook',
+    'pandas',
+    'scipy',
+    'sklearn',
+    'tensorboard',
+    'tensorflow',
+    'torch',
+    'torchvision',
+    'transformers',
+]
 
 
 a = Analysis(
@@ -25,7 +87,7 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[],
+    excludes=excludes,
     noarchive=False,
     optimize=0,
 )

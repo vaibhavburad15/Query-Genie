@@ -389,7 +389,7 @@ const Index = () => {
                 </div>
                 <div className="landing-float-badge -right-3 bottom-20 hidden md:flex">
                   <Lock className="h-4 w-4 text-emerald-300" />
-                  Read-only safe
+                  Safe execution
                 </div>
               </div>
             </div>

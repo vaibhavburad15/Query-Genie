@@ -1,5 +1,4 @@
 const { app, BrowserWindow, ipcMain, Tray, Menu, dialog } = require('electron');
-const { autoUpdater } = require('electron-updater');
 const path = require('path');
 const { spawn } = require('child_process');
 const fs = require('fs');
@@ -8,11 +7,12 @@ let mainWindow;
 let backendProcess;
 let tray;
 let isQuitting = false;
+let autoUpdater;
 
 // Backend server configuration
 const BACKEND_PORT = 8000;
-const FRONTEND_PORT = 5173; // For development
-const BACKEND_URL = `http://localhost:${BACKEND_PORT}`;
+const FRONTEND_PORT = 8082; // For development
+const BACKEND_URL = `http://127.0.0.1:${BACKEND_PORT}`;
 
 // Get the correct path for resources based on environment
 function getResourcePath(resourcePath) {
@@ -25,22 +25,61 @@ function getResourcePath(resourcePath) {
   }
 }
 
+function getIconPath() {
+  const candidates = app.isPackaged
+    ? [
+        path.join(process.resourcesPath, 'build', 'icon.ico'),
+        path.join(process.resourcesPath, 'icon.ico'),
+        path.join(__dirname, 'build', 'icon.ico')
+      ]
+    : [
+        path.join(__dirname, 'build', 'icon.ico')
+      ];
+
+  return candidates.find((candidate) => fs.existsSync(candidate));
+}
+
 // Start the Python backend server
-function startBackend() {
+async function startBackend() {
+  const backendExePath = getResourcePath('resources/backend/query-genie-backend.exe');
+  const backendDir = path.dirname(backendExePath);
+
+  console.log('Starting backend from:', backendExePath);
+  console.log('Backend directory:', backendDir);
+
+  try {
+    await checkBackendHealth(2, 500);
+    console.log('Backend is already running');
+    return;
+  } catch (error) {
+    console.log('No existing backend detected; starting a new backend process');
+  }
+
+  if (!fs.existsSync(backendExePath)) {
+    console.error('Backend executable not found at:', backendExePath);
+    throw new Error('Backend executable not found');
+  }
+
   return new Promise((resolve, reject) => {
-    try {
-      const backendExePath = getResourcePath('resources/backend/query-genie-backend.exe');
-      const backendDir = path.dirname(backendExePath);
+    let backendStderr = '';
+    let startupSettled = false;
 
-      console.log('Starting backend from:', backendExePath);
-      console.log('Backend directory:', backendDir);
-
-      if (!fs.existsSync(backendExePath)) {
-        console.error('Backend executable not found at:', backendExePath);
-        reject(new Error('Backend executable not found'));
+    const settleStartup = (callback) => {
+      if (startupSettled) {
         return;
       }
+      startupSettled = true;
+      callback();
+    };
 
+    const startupError = (message) => {
+      const errorDetail = backendStderr
+        ? `\n\nDetails:\n${backendStderr.slice(-500)}`
+        : '';
+      return new Error(`${message}${errorDetail}`);
+    };
+
+    try {
       // Start the backend process
       backendProcess = spawn(backendExePath, [], {
         cwd: backendDir,
@@ -54,22 +93,43 @@ function startBackend() {
 
       backendProcess.stderr.on('data', (data) => {
         console.error(`Backend Error: ${data}`);
+        backendStderr = `${backendStderr}${data.toString()}`.slice(-4000);
       });
 
       backendProcess.on('error', (error) => {
         console.error('Failed to start backend:', error);
-        reject(error);
+        settleStartup(() => reject(error));
       });
 
-      backendProcess.on('close', (code) => {
+      backendProcess.on('close', async (code) => {
         console.log(`Backend process exited with code ${code}`);
-        if (!isQuitting) {
-          dialog.showErrorBox(
-            'Backend Error',
-            'The backend server has stopped unexpectedly. The application will close.'
-          );
-          app.quit();
+        backendProcess = null;
+        if (isQuitting) {
+          return;
         }
+
+        try {
+          await checkBackendHealth(1, 0);
+          console.log('Backend health check still passes after process exit; continuing');
+          settleStartup(resolve);
+          return;
+        } catch (error) {
+          // The health check below decides whether this is a startup failure or a later crash.
+        }
+
+        if (!startupSettled) {
+          settleStartup(() => reject(startupError(`Backend exited before it became ready (exit code: ${code}).`)));
+          return;
+        }
+
+        const errorDetail = backendStderr
+          ? `\n\nDetails:\n${backendStderr.slice(-500)}`
+          : '';
+        dialog.showErrorBox(
+          'Backend Error',
+          `The backend server has stopped unexpectedly (exit code: ${code}).${errorDetail}\n\nTry restarting the application. If the problem persists, reinstall Query Genie.`
+        );
+        app.quit();
       });
 
       // Wait for backend to be ready
@@ -77,24 +137,30 @@ function startBackend() {
         checkBackendHealth()
           .then(() => {
             console.log('Backend is ready');
-            resolve();
+            settleStartup(resolve);
           })
           .catch((error) => {
             console.error('Backend health check failed:', error);
-            reject(error);
+            settleStartup(() => reject(startupError(error.message)));
           });
-      }, 3000); // Wait 3 seconds for backend to start
+      }, 5000); // Wait 5 seconds for backend to start (heavy Python imports)
 
     } catch (error) {
       console.error('Error starting backend:', error);
-      reject(error);
+      settleStartup(() => reject(error));
     }
   });
 }
 
+function getAutoUpdater() {
+  if (!autoUpdater) {
+    ({ autoUpdater } = require('electron-updater'));
+  }
+  return autoUpdater;
+}
+
 // Check if backend is responding
-async function checkBackendHealth() {
-  const maxRetries = 10;
+async function checkBackendHealth(maxRetries = 30, retryDelayMs = 1000) {
   for (let i = 0; i < maxRetries; i++) {
     try {
       const response = await fetch(`${BACKEND_URL}/health`);
@@ -104,7 +170,9 @@ async function checkBackendHealth() {
     } catch (error) {
       console.log(`Health check attempt ${i + 1}/${maxRetries} failed`);
     }
-    await new Promise(resolve => setTimeout(resolve, 1000));
+    if (retryDelayMs > 0) {
+      await new Promise(resolve => setTimeout(resolve, retryDelayMs));
+    }
   }
   throw new Error('Backend failed to start');
 }
@@ -120,12 +188,12 @@ function stopBackend() {
 
 // Create the main application window
 function createWindow() {
-  mainWindow = new BrowserWindow({
+  const iconPath = getIconPath();
+  const windowOptions = {
     width: 1400,
     height: 900,
     minWidth: 1000,
     minHeight: 600,
-    icon: path.join(__dirname, 'build/icon.ico'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       nodeIntegration: false,
@@ -135,6 +203,14 @@ function createWindow() {
     show: false, // Don't show until ready
     backgroundColor: '#1a1a1a',
     title: 'Query Genie'
+  };
+
+  if (iconPath) {
+    windowOptions.icon = iconPath;
+  }
+
+  mainWindow = new BrowserWindow({
+    ...windowOptions
   });
 
   // Load the frontend
@@ -174,7 +250,13 @@ function createWindow() {
 
 // Create system tray icon
 function createTray() {
-  const trayIconPath = path.join(__dirname, 'build/icon.ico');
+  const trayIconPath = getIconPath();
+
+  if (!trayIconPath) {
+    console.warn('Tray icon not found; continuing without system tray.');
+    return;
+  }
+
   tray = new Tray(trayIconPath);
 
   const contextMenu = Menu.buildFromTemplate([
@@ -191,7 +273,7 @@ function createTray() {
     {
       label: 'Check for Updates',
       click: () => {
-        autoUpdater.checkForUpdatesAndNotify();
+        getAutoUpdater().checkForUpdatesAndNotify();
       }
     },
     { type: 'separator' },
@@ -218,14 +300,16 @@ function createTray() {
 
 // Auto-updater configuration
 function setupAutoUpdater() {
-  autoUpdater.autoDownload = false;
-  autoUpdater.autoInstallOnAppQuit = true;
+  const updater = getAutoUpdater();
 
-  autoUpdater.on('checking-for-update', () => {
+  updater.autoDownload = false;
+  updater.autoInstallOnAppQuit = true;
+
+  updater.on('checking-for-update', () => {
     console.log('Checking for updates...');
   });
 
-  autoUpdater.on('update-available', (info) => {
+  updater.on('update-available', (info) => {
     console.log('Update available:', info);
     dialog.showMessageBox(mainWindow, {
       type: 'info',
@@ -234,16 +318,16 @@ function setupAutoUpdater() {
       buttons: ['Download', 'Later']
     }).then((result) => {
       if (result.response === 0) {
-        autoUpdater.downloadUpdate();
+        updater.downloadUpdate();
       }
     });
   });
 
-  autoUpdater.on('update-not-available', () => {
+  updater.on('update-not-available', () => {
     console.log('No updates available');
   });
 
-  autoUpdater.on('download-progress', (progressObj) => {
+  updater.on('download-progress', (progressObj) => {
     console.log(`Download speed: ${progressObj.bytesPerSecond}`);
     console.log(`Downloaded ${progressObj.percent}%`);
     
@@ -252,7 +336,7 @@ function setupAutoUpdater() {
     }
   });
 
-  autoUpdater.on('update-downloaded', (info) => {
+  updater.on('update-downloaded', (info) => {
     console.log('Update downloaded:', info);
     mainWindow.setProgressBar(-1); // Remove progress bar
     
@@ -264,18 +348,18 @@ function setupAutoUpdater() {
     }).then((result) => {
       if (result.response === 0) {
         isQuitting = true;
-        autoUpdater.quitAndInstall(false, true);
+        updater.quitAndInstall(false, true);
       }
     });
   });
 
-  autoUpdater.on('error', (error) => {
+  updater.on('error', (error) => {
     console.error('Auto-updater error:', error);
   });
 
   // Check for updates on startup (after 5 seconds)
   setTimeout(() => {
-    autoUpdater.checkForUpdatesAndNotify();
+    updater.checkForUpdatesAndNotify();
   }, 5000);
 }
 
@@ -338,7 +422,7 @@ ipcMain.handle('get-app-version', () => {
 });
 
 ipcMain.handle('check-for-updates', () => {
-  autoUpdater.checkForUpdatesAndNotify();
+  return getAutoUpdater().checkForUpdatesAndNotify();
 });
 
 // Handle uncaught exceptions

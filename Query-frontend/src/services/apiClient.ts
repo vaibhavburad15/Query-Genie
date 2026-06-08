@@ -9,10 +9,16 @@ const configuredBaseUrl =
 
 function getDefaultBaseUrl(): string {
   if (typeof window === 'undefined') {
-    return 'http://localhost:8000';
+    return 'http://127.0.0.1:8000';
   }
 
-  return `${window.location.protocol}//${window.location.hostname}:8000`;
+  if (window.location.protocol === 'file:') {
+    return 'http://127.0.0.1:8000';
+  }
+
+  const hostname = window.location.hostname || '127.0.0.1';
+  const protocol = window.location.protocol === 'https:' ? 'https:' : 'http:';
+  return `${protocol}//${hostname}:8000`;
 }
 
 export const BASE_URL: string = configuredBaseUrl?.trim() || getDefaultBaseUrl();

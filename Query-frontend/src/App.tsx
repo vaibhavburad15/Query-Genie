@@ -3,7 +3,7 @@ import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+import { BrowserRouter, HashRouter, Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider, useAuth } from "@/contexts/AuthContext";
 import { DatabaseProvider } from "@/contexts/DatabaseContext";
 import { ThemeProvider } from "@/contexts/ThemeContext";
@@ -18,6 +18,7 @@ const Index = lazy(() => import("./pages/Index"));
 const CustomDashboard = lazy(() => import("./pages/Customdashboard"));
 
 const queryClient = new QueryClient();
+const Router = window.location.protocol === "file:" ? HashRouter : BrowserRouter;
 
 // Protected Route Component
 const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
@@ -84,7 +85,7 @@ const AppRoutes = () => (
 
 const App = () => (
   <QueryClientProvider client={queryClient}>
-    <BrowserRouter>
+    <Router>
       <ThemeProvider>
         <AuthProvider>
           {/* ✅ ADD: DatabaseProvider wraps the entire app */}
@@ -99,7 +100,7 @@ const App = () => (
           </DatabaseProvider>
         </AuthProvider>
       </ThemeProvider>
-    </BrowserRouter>
+    </Router>
   </QueryClientProvider>
 );
 

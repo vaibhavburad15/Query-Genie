@@ -55,6 +55,19 @@ import threading
 import time
 
 # ─────────────────────────────────────────────
+# FROZEN EXE PATH RESOLUTION
+# When running as a PyInstaller --onefile exe, __file__ resolves to a
+# temporary extraction directory (_MEIPASS) which is READ-ONLY and
+# deleted on exit.  Writable files (users.db, audit.log, imported_sources)
+# must live next to the actual .exe, whose path is passed via the
+# QUERY_GENIE_DATA_DIR environment variable set by backend_runner.py.
+# ─────────────────────────────────────────────
+DATA_DIR = os.environ.get(
+    "QUERY_GENIE_DATA_DIR",
+    os.path.dirname(os.path.abspath(__file__))   # dev fallback
+)
+
+# ─────────────────────────────────────────────
 # ENV / KEYS
 # ─────────────────────────────────────────────
 logger = logging.getLogger(__name__)
@@ -62,11 +75,17 @@ logger = logging.getLogger(__name__)
 # BUG-019 FIX: Audit logging for security events
 audit_logger = logging.getLogger('audit')
 audit_logger.setLevel(logging.INFO)
-audit_handler = logging.FileHandler('audit.log')
-audit_handler.setFormatter(logging.Formatter(
-    '%(asctime)s - %(levelname)s - %(message)s'
-))
-audit_logger.addHandler(audit_handler)
+_audit_log_path = os.path.join(DATA_DIR, 'audit.log')
+try:
+    audit_handler = logging.FileHandler(_audit_log_path)
+    audit_handler.setFormatter(logging.Formatter(
+        '%(asctime)s - %(levelname)s - %(message)s'
+    ))
+    audit_logger.addHandler(audit_handler)
+except (PermissionError, OSError) as _exc:
+    # Fallback: don't crash the whole app if audit log can't be written
+    audit_logger.addHandler(logging.NullHandler())
+    logger.warning('Could not create audit.log at %s: %s', _audit_log_path, _exc)
 
 load_dotenv()
 groq_api_key = os.getenv("GROQ_API_KEY")
@@ -133,7 +152,8 @@ register_custom_reflection_types()
 # ─────────────────────────────────────────────
 # APP-INTERNAL SQLITE DATABASE  (users, sessions, etc.)
 # ─────────────────────────────────────────────
-BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
+# Use DATA_DIR (exe directory) for writable files, NOT __file__ (temp dir)
+BACKEND_DIR = DATA_DIR
 SQLITE_DB_FILE = os.path.join(BACKEND_DIR, "users.db")
 IMPORTED_DB_DIR = os.path.join(BACKEND_DIR, "imported_sources")
 os.makedirs(IMPORTED_DB_DIR, exist_ok=True)
@@ -516,6 +536,14 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         return response
 
 app.add_middleware(SecurityHeadersMiddleware)
+
+# ─────────────────────────────────────────────
+# HEALTH CHECK ENDPOINT
+# Used by the Electron shell (main.js) to confirm the backend is ready.
+# ─────────────────────────────────────────────
+@app.get("/health")
+async def health_check():
+    return {"status": "ok"}
 
 # ─────────────────────────────────────────────
 # OTP MANAGER
