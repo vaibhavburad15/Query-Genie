@@ -381,6 +381,8 @@ db_session_store = DbSessionStore(ttl_seconds=int(os.getenv("DB_SESSION_TTL", "3
 DEFAULT_MAX_RESULT_ROWS = None  # No limit - return all rows
 MAX_RESULT_ROWS_ENV = os.getenv("MAX_RESULT_ROWS", "")
 MAX_RESULT_ROWS = int(MAX_RESULT_ROWS_ENV) if MAX_RESULT_ROWS_ENV else None  # Enterprise users need all data
+if MAX_RESULT_ROWS is not None and MAX_RESULT_ROWS <= 0:
+    MAX_RESULT_ROWS = None
 
 
 # ─────────────────────────────────────────────
@@ -527,6 +529,7 @@ DEFAULT_ALLOWED_ORIGINS = [
     "http://127.0.0.1:8082",
     "https://www.querygenie.tech",
     "https://querygenie.tech",
+    "https://querygenie.duckdns.org",
 ]
 
 allowed_origins_env = os.getenv("ALLOWED_ORIGINS")
@@ -562,7 +565,9 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
             "style-src 'self' 'unsafe-inline'; "
             "img-src 'self' data: https:; "
             "font-src 'self' data:; "
-            "connect-src 'self' http://localhost:8000 http://127.0.0.1:8000 http://localhost:8082 http://127.0.0.1:8082"
+            "connect-src 'self' http://localhost:8000 http://127.0.0.1:8000 "
+            "http://localhost:8082 http://127.0.0.1:8082 "
+            "https://www.querygenie.tech https://querygenie.tech https://querygenie.duckdns.org"
         )
         
         # Prevent MIME type sniffing
@@ -1584,15 +1589,35 @@ def build_connection_artifacts(config: DBConfig) -> Tuple[str, str, str]:
     raise ValueError(f"Unsupported source type: {config.type}")
 
 
+def quote_external_table_name(engine: Any, table_name: str, schema_name: Optional[str] = None) -> str:
+    preparer = engine.dialect.identifier_preparer
+    quoted_table = preparer.quote(table_name)
+    if schema_name:
+        return f"{preparer.quote_schema(schema_name)}.{quoted_table}"
+    return quoted_table
+
+
 def get_sql_tables_info(db_uri: str) -> List[Dict[str, Any]]:
     engine = engine_cache.get(db_uri)
     inspector = sqlalchemy_inspect(engine)
     table_names = inspector.get_table_names()
+    schema_name = getattr(inspector, "default_schema_name", None)
+    tables_info: List[Dict[str, Any]] = []
 
-    return [
-        {"name": table_name, "rowCount": 0, "lastUpdated": "unknown"}
-        for table_name in table_names
-    ]
+    with engine.connect() as connection:
+        for table_name in table_names:
+            row_count = 0
+            try:
+                quoted_table = quote_external_table_name(engine, table_name, schema_name)
+                row_count = int(connection.execute(text(f"SELECT COUNT(*) FROM {quoted_table}")).scalar() or 0)
+            except Exception as exc:
+                logger.warning("Unable to count rows for table %s: %s", table_name, exc)
+
+            tables_info.append(
+                {"name": table_name, "rowCount": row_count, "lastUpdated": "live"}
+            )
+
+    return tables_info
 
 
 def get_sql_table_schema(db_uri: str, table_name: str) -> List[Dict[str, Any]]:
@@ -2156,7 +2181,12 @@ def execute_read_only_sql(sql_query: str, db, db_name: str) -> str:
         try:
             result_proxy = connection.execute(text(sql_query))
             columns = list(result_proxy.keys())
-            rows = result_proxy.fetchmany(MAX_RESULT_ROWS)
+            if MAX_RESULT_ROWS is None:
+                rows = result_proxy.fetchall()
+                limited = False
+            else:
+                rows = result_proxy.fetchmany(MAX_RESULT_ROWS)
+                limited = len(rows) == MAX_RESULT_ROWS
             total_fetched = len(rows)
 
             data = [
@@ -2169,7 +2199,8 @@ def execute_read_only_sql(sql_query: str, db, db_name: str) -> str:
                 "data": data,
                 "columns": columns,
                 "row_count": total_fetched,
-                "limited": total_fetched == MAX_RESULT_ROWS,
+                "rowCount": total_fetched,
+                "limited": limited,
             }
             query_cache.set(sql_query, db_name, output_data)
             return f"SQL: `{sql_query}`\nOutput: {json.dumps(output_data)}"

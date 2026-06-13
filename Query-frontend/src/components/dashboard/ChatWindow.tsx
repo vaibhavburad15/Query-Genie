@@ -48,6 +48,7 @@ interface ParsedSqlOutput {
   columns?: string[];
   message?: string;
   rowCount?: number;
+  row_count?: number;
   limited?: boolean;
   table?: { columns: string[]; data: string[][] };
   sql?: string;
@@ -560,7 +561,7 @@ const ChatWindow: React.FC<ChatWindowProps> = memo(
                               ? parsedOutput.data[0].map((_, idx) => `Column_${idx + 1}`)
                               : ['Value'];
 
-                          const rowCount = parsedOutput.rowCount || parsedOutput.data.length;
+                          const rowCount = parsedOutput.rowCount ?? parsedOutput.row_count ?? parsedOutput.data.length;
                           const chartData = convertToChartFormat(parsedOutput.data, columns);
                           const suggestedChartType = inferChartType(chartData, columns);
 
